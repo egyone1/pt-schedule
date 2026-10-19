@@ -21,6 +21,12 @@ service cloud.firestore {
             && request.resource.data.status in ['open', 'closed']);
     }
 
+    // admin-managed departments (doctor -> department, department -> color)
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // per-day totals for the statistics / analysis tabs
     match /stats/{date} {
       allow read: if true;

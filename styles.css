@@ -3,6 +3,7 @@
   --bg: #f4f5f3;
   --surface: #ffffff;
   --surface-2: #f8f9f7;
+  --zebra: #f1f2ef;
   --line: #e3e5e0;
   --line-strong: #cfd3cb;
   --text: #15201c;
@@ -30,6 +31,7 @@
     --bg: #121413;
     --surface: #1a1a19;
     --surface-2: #202221;
+    --zebra: #1f2120;
     --line: #2d302e;
     --line-strong: #3b3f3c;
     --text: #f0efec;
@@ -49,7 +51,7 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #121413; --surface: #1a1a19; --surface-2: #202221; --line: #2d302e; --line-strong: #3b3f3c;
+  --bg: #121413; --surface: #1a1a19; --surface-2: #202221; --zebra: #1f2120; --line: #2d302e; --line-strong: #3b3f3c;
   --text: #f0efec; --text-2: #c3c2b7; --text-3: #8f9590; --brand: #3fb393; --brand-ink: #0b1a15;
   --brand-soft: #173029; --good-bg: #173a1c; --good-line: #2f7a35; --bad-bg: #3d1d1d; --bad-line: #8a3434;
   --warn-bg: #3a3218; --series-1: #3987e5; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
@@ -152,6 +154,18 @@ main { padding: 18px 20px 40px; max-width: 1600px; margin: 0 auto; }
   background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--row) * 4 - 1px), var(--line) calc(var(--row) * 4 - 1px), var(--line) calc(var(--row) * 4));
 }
 .tlabel { height: calc(var(--row) * 4); font-size: 12px; color: var(--text-3); padding: 2px 8px; direction: ltr; text-align: right; font-variant-numeric: tabular-nums; }
+/* alternate columns grey / white so neighbouring doctors don't blur together */
+.col:nth-child(odd) { background: var(--zebra); }
+.col:nth-child(odd) .col-head, .col:nth-child(odd) .col-foot { background: var(--zebra); }
+.col-head.dc { background: color-mix(in srgb, var(--dc) 16%, var(--surface)) !important; box-shadow: inset 0 4px 0 var(--dc); }
+.col-head.done.dc { box-shadow: inset 0 4px 0 var(--dc), inset 0 -3px 0 var(--brand); }
+.dept-sel { margin-top: 2px; width: 100%; font-size: 11.5px; padding: 1px 4px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text-2); direction: ltr; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 99px; margin-inline-end: 5px; vertical-align: -1px; }
+.dept-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.dept-card { padding: 10px 14px; border-top: 4px solid var(--dc, var(--line-strong)); }
+.dept-card .k { font-size: 13px; color: var(--text-2); }
+.dept-card .v { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.dept-card .s { font-size: 12px; color: var(--text-3); }
 .sess {
   position: absolute; inset-inline: 4px; border-radius: 9px; padding: 4px 8px; overflow: hidden;
   background: var(--surface); border: 1.5px solid var(--line-strong); text-align: right; font-size: 12.5px; line-height: 1.35;

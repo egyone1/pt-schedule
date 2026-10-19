@@ -1,5 +1,5 @@
-import { createStore } from "./store.js";
-import { ADMIN_EMAIL } from "./config.js";
+import { createStore } from "./store.js?v=3";
+import { ADMIN_EMAIL } from "./config.js?v=3";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -18,7 +18,8 @@ const idName = n => String(n || "").toLowerCase().replace(/[^a-z؀-ۿ]+/g, " ").
 const state = {
   store: null, admin: false, view: "today",
   openDays: [], day: null, viewDate: null, unsubDay: null,
-  stats: [], section: "all", me: ls.get("me", ""),
+  stats: [], section: "all", me: ls.get("meKey", ""), meName: ls.get("me", ""),
+  settings: { depts: {}, assign: {} },
   statsMonth: "", period: "month", charts: [], metric: ls.get("metric", "sessions"),
 };
 
@@ -87,6 +88,54 @@ function onOpenDays(days) {
   else if (state.view === "today") renderToday();
 }
 
+/* ---------------- departments (admin) ---------------- */
+const PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
+// the department the admin put the doctor in, else the section from the sheet
+const deptOf = d => (state.settings.assign || {})[idName(d.name)] || d.section || "—";
+const deptColor = name => (state.settings.depts || {})[name] || "";
+const dcStyle = name => deptColor(name) ? `style="--dc:${deptColor(name)}"` : "";
+
+async function saveSettings(patch) {
+  const next = { depts: { ...(state.settings.depts || {}) }, assign: { ...(state.settings.assign || {}) }, ...patch };
+  try { await state.store.saveSettings(next); }
+  catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
+}
+async function assignDept(name, value) {
+  const assign = { ...(state.settings.assign || {}) }, depts = { ...(state.settings.depts || {}) };
+  if (value === "__new") {
+    const d = await modal("قسم جديد", `اسم القسم:<input id="deptName" placeholder="مثلاً Ortho">`, { ok: "ضيف" });
+    const nm = d?.querySelector("#deptName").value.trim();
+    if (!nm) { renderToday(); return; }
+    if (!depts[nm]) depts[nm] = PALETTE[Object.keys(depts).length % PALETTE.length];
+    value = nm;
+  }
+  if (value) assign[idName(name)] = value; else delete assign[idName(name)];
+  await saveSettings({ depts, assign });
+  toast(value ? `${name} اتحط في ${value}` : `${name} رجع لقسم الشيت`);
+}
+async function manageDepts() {
+  const depts = { ...(state.settings.depts || {}) };
+  const names = Object.keys(depts);
+  const rows = names.map((n, i) => `<div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+      <span class="dot" style="background:${depts[n]}"></span><b style="flex:1;direction:ltr;text-align:right">${esc(n)}</b>
+      <select data-color="${i}">${PALETTE.map((c, j) => `<option value="${c}" ${c === depts[n] ? "selected" : ""}>لون ${j + 1}</option>`).join("")}</select>
+      <label style="font-size:12px"><input type="checkbox" data-del="${i}" style="width:auto;margin:0"> امسح</label></div>`).join("");
+  const d = await modal("الأقسام وألوانها",
+    `${names.length ? rows : "لسه مفيش أقسام. اختار القسم من فوق عمود أي دكتور في تاب اليوم."}
+     <p style="font-size:12.5px;margin-top:10px">الألوان: ${PALETTE.map((c, j) => `<span class="dot" style="background:${c}"></span> ${j + 1}`).join(" &nbsp;")}</p>`,
+    { ok: "احفظ" });
+  if (!d || !names.length) return;
+  const assign = { ...(state.settings.assign || {}) };
+  names.forEach((n, i) => {
+    if (d.querySelector(`[data-del="${i}"]`).checked) {
+      delete depts[n];
+      for (const k of Object.keys(assign)) if (assign[k] === n) delete assign[k];
+    } else depts[n] = d.querySelector(`[data-color="${i}"]`).value;
+  });
+  await saveSettings({ depts, assign });
+  toast("الأقسام اتحفظت ✓");
+}
+
 /* ---------------- TODAY ---------------- */
 const canEdit = doc => state.admin || (state.day?.status === "open" && !doc.submitted);
 
@@ -134,10 +183,14 @@ function renderToday() {
     return;
   }
   const docs = doctorsOf(day);
-  const sections = [...new Set(docs.map(d => d.section || "—"))];
+  const sections = [...new Set(docs.map(deptOf))];
   const submitted = docs.filter(d => d.submitted).length;
-  const mine = docs.find(d => idName(d.name) === idName(state.me));
-  const visible = docs.filter(d => state.section === "all" || (d.section || "—") === state.section);
+  // pick by key (two doctors can share a name), fall back to the name on a new day
+  const mine = docs.find(d => d.key === state.me) || (state.meName && docs.find(d => idName(d.name) === idName(state.meName)));
+  const visible = docs.filter(d => state.section === "all" || deptOf(d) === state.section);
+  // keep the scroll position across re-renders
+  const oldBoard = el.querySelector(".board");
+  const keep = { left: oldBoard?.scrollLeft, top: oldBoard?.scrollTop, y: window.scrollY };
 
   const statusLine = day.status === "open"
     ? `مفتوح · اتسحب من تاب «${esc(day.sheet)}»`
@@ -154,12 +207,12 @@ function renderToday() {
       <div class="spacer"></div>
       <label class="field">أنا:
         <select id="meSel"><option value="">كل الدكاترة</option>
-          ${docs.map(d => `<option value="${esc(d.name)}" ${mine && mine.key === d.key ? "selected" : ""}>${esc(d.name)}</option>`).join("")}
+          ${docs.map(d => `<option value="${esc(d.key)}" ${mine && mine.key === d.key ? "selected" : ""}>${esc(d.name)} · ${esc(deptOf(d))}</option>`).join("")}
         </select></label>
     </div>
     <div class="toolbar">
       ${mine ? "" : `<div class="chips">${["all", ...sections].map(s =>
-        `<button class="chip ${state.section === s ? "active" : ""}" data-sec="${esc(s)}">${s === "all" ? "الكل" : esc(s)}</button>`).join("")}</div>`}
+        `<button class="chip ${state.section === s ? "active" : ""}" data-sec="${esc(s)}">${s !== "all" && deptColor(s) ? `<span class="dot" style="background:${deptColor(s)}"></span>` : ""}${s === "all" ? "الكل" : esc(s)}</button>`).join("")}</div>`}
       <div class="spacer"></div>
       <div class="legend">
         <span><i class="sw"></i>لسه</span>
@@ -170,8 +223,18 @@ function renderToday() {
     </div>
     ${mine ? mineHTML(mine) : gridHTML(visible)}`;
 
+  const board = el.querySelector(".board");
+  if (board && keep.left != null) { board.scrollLeft = keep.left; board.scrollTop = keep.top; }
+  if (keep.y) window.scrollTo(0, keep.y);
+
   bindAdminBar();
-  $("#meSel").onchange = e => { state.me = e.target.value; ls.set("me", state.me); renderToday(); };
+  $("#meSel").onchange = e => {
+    state.me = e.target.value;
+    state.meName = docs.find(d => d.key === state.me)?.name || "";
+    ls.set("meKey", state.me); ls.set("me", state.meName);
+    renderToday();
+  };
+  el.querySelectorAll("[data-dept]").forEach(s => s.onchange = () => assignDept(s.dataset.dept, s.value));
   el.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => { state.section = b.dataset.sec; renderToday(); });
   el.querySelectorAll(".sess").forEach(b => b.onclick = () => cycle(b.dataset.key, b.dataset.id));
   el.querySelectorAll("[data-submit]").forEach(b => b.onclick = () => submit(b.dataset.submit));
@@ -187,10 +250,10 @@ function gridHTML(docs) {
   const hours = []; for (let m = start; m < end; m += 60) hours.push(m);
   const cols = docs.map(d => {
     const c = counts(d);
-    return `<div class="col">
-      <div class="col-head ${d.submitted ? "done" : ""}">
+    return `<div class="col" data-col="${esc(d.key)}">
+      <div class="col-head ${d.submitted ? "done" : ""} ${deptColor(deptOf(d)) ? "dc" : ""}" ${dcStyle(deptOf(d))}>
         <div class="nm" title="${esc(d.name)}">${esc(d.name)}</div>
-        <div class="sec">${esc(d.section || "—")} ${d.submitted ? '<span class="badge">· Submit ✓</span>' : ""}</div>
+        ${state.admin ? deptSelect(d) : `<div class="sec">${esc(deptOf(d))} ${d.submitted ? '<span class="badge">· Submit ✓</span>' : ""}</div>`}
         <div class="cnt"><span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span></div>
       </div>
       <div class="slots slot-bg" style="height:${h}px">
@@ -204,6 +267,13 @@ function gridHTML(docs) {
       <div class="slots slot-bg" style="height:${h}px">${hours.map(m => `<div class="tlabel">${fmtTime(m)}</div>`).join("")}</div>
       <div class="time-foot"></div></div>
     ${cols}</div></div>`;
+}
+
+function deptSelect(d) {
+  const cur = (state.settings.assign || {})[idName(d.name)] || "";
+  const opts = Object.keys(state.settings.depts || {}).map(n => `<option value="${esc(n)}" ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
+  return `<select class="dept-sel" data-dept="${esc(d.name)}" title="القسم">
+    <option value="">${esc(d.section || "—")} (من الشيت)</option>${opts}<option value="__new">+ قسم جديد…</option></select>`;
 }
 
 function mineHTML(d) {
@@ -222,8 +292,15 @@ async function cycle(key, id) {
     return;
   }
   const sessions = doc.sessions.map(s => s.id === id ? { ...s, status: ((s.status || 0) + 1) % 3 } : s);
-  day.doctors[key].sessions = sessions;          // instant feedback
-  renderToday();
+  day.doctors[key].sessions = sessions;          // instant feedback, without re-drawing the page
+  const btn = document.querySelector(`.sess[data-key="${CSS.escape(key)}"][data-id="${CSS.escape(id)}"]`);
+  const st = sessions.find(s => s.id === id).status;
+  if (btn) btn.className = btn.className.replace(/\bs[012]\b/, "s" + st);
+  const c = counts(day.doctors[key]);
+  const cnt = document.querySelector(`[data-col="${CSS.escape(key)}"] .cnt`);
+  if (cnt) cnt.innerHTML = `<span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span>`;
+  const mc = document.querySelector(".mine .hdr span");
+  if (mc) mc.textContent = `✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}`;
   try { await state.store.setSessions(day.date, key, sessions); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
@@ -256,6 +333,7 @@ function adminDayBar() {
     ${state.day ? (st === "open"
       ? `<button class="ghost" id="closeDay">اقفل اليوم واحفظ الأرقام</button>`
       : `<button class="ghost" id="reopenDay">افتح اليوم تاني للدكاترة</button>`) : ""}
+    <button class="ghost" id="deptsBtn">🎨 الأقسام</button>
     ${state.store.demo ? `<button class="ghost" id="resetDemo">رجّع التجربة من الأول</button>` : ""}
   </div>`;
 }
@@ -271,6 +349,7 @@ function bindAdminBar() {
     await state.store.setStatus(state.day.date, "open"); toast("اليوم اتفتح تاني");
   });
   $("#resetDemo")?.addEventListener("click", () => state.store.resetDemo());
+  $("#deptsBtn")?.addEventListener("click", manageDepts);
 }
 
 /* ---------------- aggregation ---------------- */
@@ -298,6 +377,7 @@ function byDoctor(rows) {
   for (const r of rows) {
     const o = m.get(r.id) || { name: r.name, section: r.section, attended: 0, noShow: 0, booked: 0, days: 0, perDay: {} };
     o.section = r.section || o.section;            // rows are date-ordered -> latest section wins
+    o.dept = deptOf(o);
     o.cases = (o.cases || 0) + (r.cases ?? r.attended);
     o.attended += valOf(r); o.noShow += r.noShow; o.booked += r.booked; o.days += 1;
     o.perDay[r.date] = (o.perDay[r.date] || 0) + valOf(r);
@@ -335,11 +415,12 @@ function renderStats() {
         <select id="monthSel">${months.map(m => `<option value="${m}" ${m === state.statsMonth ? "selected" : ""}>${new Date(m + "-15").toLocaleDateString("ar-EG-u-nu-latn", { month: "long", year: "numeric" })}</option>`).join("")}</select></label>
       <button class="ghost" id="csvBtn">⬇ Excel (CSV)</button>
     </div>
+    ${deptSummary(list, M)}
     <div class="card"><div class="table-wrap"><table class="stats">
       <thead><tr><th class="nm">الدكتور</th><th>القسم</th>
         ${dates.map(d => `<th class="day ${state.admin ? "link" : ""}" data-date="${d}" title="${arDate(d)}">${shortDate(d)}</th>`).join("")}
         <th>إجمالي ${M.many}</th><th>غياب</th><th>نسبة الحضور</th></tr></thead>
-      <tbody>${list.map(d => `<tr><td class="nm">${esc(d.name)}</td><td style="direction:ltr">${esc(d.section || "—")}</td>
+      <tbody>${list.map(d => `<tr><td class="nm">${esc(d.name)}</td><td style="direction:ltr">${deptColor(d.dept) ? `<span class="dot" style="background:${deptColor(d.dept)}"></span>` : ""}${esc(d.dept)}</td>
         ${dates.map(dt => {
           const v = d.perDay[dt];
           return v == null ? `<td class="zero">·</td>` : `<td class="${v ? "" : "zero"}" title="غياب: ${d.noShowDay[dt] || 0}">${v}</td>`;
@@ -355,13 +436,28 @@ function renderStats() {
   $("#delBtn")?.addEventListener("click", deleteData);
   $("#csvBtn").onclick = () => {
     const head = ["Doctor", "Section", ...dates, "Total", "No-show"];
-    const lines = [head, ...list.map(d => [d.name, d.section, ...dates.map(dt => d.perDay[dt] ?? ""), d.attended, d.noShow])];
+    const lines = [head, ...list.map(d => [d.name, d.dept, ...dates.map(dt => d.perDay[dt] ?? ""), d.attended, d.noShow])];
     const csv = "﻿" + lines.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = `sessions-${state.statsMonth}.csv`; a.click();
   };
   if (state.admin) el.querySelectorAll("th.day").forEach(th => th.onclick = () => { watchDay(th.dataset.date); setView("today"); });
+}
+
+function deptSummary(list, M) {
+  const by = {};
+  for (const d of list) {
+    const o = by[d.dept] || (by[d.dept] = { att: 0, ns: 0, docs: 0 });
+    o.att += d.attended; o.ns += d.noShow; o.docs += 1;
+  }
+  const rows = Object.entries(by).sort((a, b) => b[1].att - a[1].att);
+  return `<div class="dept-cards">${rows.map(([n, o]) => `
+    <div class="card dept-card" ${dcStyle(n)}>
+      <div class="k">${deptColor(n) ? `<span class="dot" style="background:${deptColor(n)}"></span>` : ""}<b dir="ltr">${esc(n)}</b></div>
+      <div class="v">${o.att}</div>
+      <div class="s">${M.many} · ${o.docs} دكتور · غياب ${o.ns}</div>
+    </div>`).join("")}</div>`;
 }
 
 async function deleteData() {
@@ -432,7 +528,7 @@ function renderAnalysis() {
   });
   const best = perDay.reduce((a, b) => b.att > a.att ? b : a);
   const secMap = {};
-  rows.forEach(r => { const k = r.section || "—"; secMap[k] = (secMap[k] || 0) + valOf(r); });
+  rows.forEach(r => { const k = deptOf(r); secMap[k] = (secMap[k] || 0) + valOf(r); });
   const secs = Object.entries(secMap).sort((a, b) => b[1] - a[1]);
   const nsRate = d => d.noShow / ((d.cases || d.attended) + d.noShow);
   const worstNs = [...docs].filter(d => d.attended + d.noShow >= 5).sort((a, b) => nsRate(b) - nsRate(a))[0];
@@ -489,7 +585,7 @@ function renderAnalysis() {
   }));
   state.charts.push(new C($("#cSec"), {
     type: "bar",
-    data: { labels: secs.map(s => s[0]), datasets: [{ label: METRICS[state.metric].many, data: secs.map(s => s[1]), backgroundColor: blue, ...bar }] },
+    data: { labels: secs.map(s => s[0]), datasets: [{ label: METRICS[state.metric].many, data: secs.map(s => s[1]), backgroundColor: secs.map(s => deptColor(s[0]) || blue), ...bar }] },
     options: { ...base, plugins: { ...base.plugins, legend: { display: false } },
       scales: { x: { grid: { display: false } }, y: { grid: { color: grid }, ticks: { precision: 0 } } } },
   }));
@@ -506,6 +602,7 @@ function renderAnalysis() {
     if (!isAdmin && state.viewDate && !state.openDays.some(d => d.date === state.viewDate)) watchDay(state.openDays[0]?.date || null);
     render();
   });
+  state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, ...s }; render(); });
   state.store.onOpenDays(onOpenDays);
   state.store.onStats(s => { state.stats = s; if (state.view !== "today") render(); else if (state.admin) renderToday(); });
   render();

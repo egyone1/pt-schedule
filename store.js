@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=3";
 
 export function summarize(day) {
   const out = {};
@@ -49,6 +49,10 @@ async function firebaseStore() {
     onStats(cb) {
       return fs.onSnapshot(fs.collection(db, "stats"), snap => cb(snap.docs.map(d => d.data())));
     },
+    onSettings(cb) {
+      return fs.onSnapshot(fs.doc(db, "settings", "departments"), s => cb(s.exists() ? s.data() : {}));
+    },
+    saveSettings: data => fs.setDoc(fs.doc(db, "settings", "departments"), data),
     async setSessions(date, key, sessions) {
       await fs.updateDoc(dayRef(date), { [`doctors.${key}.sessions`]: sessions, updatedAt: nowIso() });
       await this._restat(date);
@@ -120,6 +124,8 @@ async function demoStore() {
       .sort((a, b) => b.date.localeCompare(a.date)))),
     onDay: (date, cb) => sub(() => cb(data.days[date] ? clone(data.days[date]) : null)),
     onStats: cb => sub(() => cb(Object.values(data.stats).map(clone))),
+    onSettings: cb => sub(() => cb(clone(data.settings || {}))),
+    async saveSettings(s) { data.settings = s; save(); },
     async setSessions(date, key, sessions) {
       const day = data.days[date];
       day.doctors[key].sessions = sessions;
@@ -150,5 +156,6 @@ async function demoStore() {
 }
 
 export async function createStore() {
-  return firebaseConfig.apiKey ? firebaseStore() : demoStore();
+  const forceDemo = new URLSearchParams(location.search).has("demo");   // ?demo = local sandbox
+  return firebaseConfig.apiKey && !forceDemo ? firebaseStore() : demoStore();
 }
