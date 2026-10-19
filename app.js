@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=3";
-import { ADMIN_EMAIL } from "./config.js?v=3";
+import { createStore } from "./store.js?v=4";
+import { ADMIN_EMAIL } from "./config.js?v=4";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -19,7 +19,7 @@ const state = {
   store: null, admin: false, view: "today",
   openDays: [], day: null, viewDate: null, unsubDay: null,
   stats: [], section: "all", me: ls.get("meKey", ""), meName: ls.get("me", ""),
-  settings: { depts: {}, assign: {} },
+  settings: { depts: {}, assign: {} }, dept: "all",
   statsMonth: "", period: "month", charts: [], metric: ls.get("metric", "sessions"),
 };
 
@@ -399,7 +399,10 @@ function renderStats() {
   if (!months.includes(state.statsMonth)) state.statsMonth = months[0];
   const docs = state.stats.filter(s => s.date.startsWith(state.statsMonth)).sort((a, b) => a.date.localeCompare(b.date));
   const dates = docs.map(s => s.date);
-  const list = byDoctor(rowsFrom(docs));
+  const listAll = byDoctor(rowsFrom(docs));
+  const deptNames = [...new Set(listAll.map(d => d.dept))].sort();
+  const deptBar = deptChips(deptNames);
+  const list = listAll.filter(d => inDept(d.dept));
   const tot = list.reduce((a, d) => ({ att: a.att + d.attended, ns: a.ns + d.noShow }), { att: 0, ns: 0 });
   const pct = (a, n) => a + n ? Math.round(a / (a + n) * 100) + "%" : "—";
 
@@ -415,7 +418,8 @@ function renderStats() {
         <select id="monthSel">${months.map(m => `<option value="${m}" ${m === state.statsMonth ? "selected" : ""}>${new Date(m + "-15").toLocaleDateString("ar-EG-u-nu-latn", { month: "long", year: "numeric" })}</option>`).join("")}</select></label>
       <button class="ghost" id="csvBtn">⬇ Excel (CSV)</button>
     </div>
-    ${deptSummary(list, M)}
+    ${deptSummary(listAll, M)}
+    <div class="toolbar"><span class="field">القسم:</span>${deptBar}</div>
     <div class="card"><div class="table-wrap"><table class="stats">
       <thead><tr><th class="nm">الدكتور</th><th>القسم</th>
         ${dates.map(d => `<th class="day ${state.admin ? "link" : ""}" data-date="${d}" title="${arDate(d)}">${shortDate(d)}</th>`).join("")}
@@ -426,13 +430,14 @@ function renderStats() {
           return v == null ? `<td class="zero">·</td>` : `<td class="${v ? "" : "zero"}" title="غياب: ${d.noShowDay[dt] || 0}">${v}</td>`;
         }).join("")}
         <td class="tot">${d.attended}</td><td class="ns">${d.noShow || ""}</td><td>${pct(d.attended, d.noShow)}</td></tr>`).join("")}</tbody>
-      <tfoot><tr><td class="nm">الإجمالي</td><td></td>
+      <tfoot><tr><td class="nm">الإجمالي${state.dept === "all" ? "" : ` · ${esc(state.dept)}`}</td><td></td>
         ${dates.map(dt => `<td>${list.reduce((a, d) => a + (d.perDay[dt] || 0), 0)}</td>`).join("")}
         <td class="tot">${tot.att}</td><td class="ns">${tot.ns}</td><td>${pct(tot.att, tot.ns)}</td></tr></tfoot>
     </table></div></div>`;
 
   $("#monthSel").onchange = e => { state.statsMonth = e.target.value; renderStats(); };
   bindMetric(el, renderStats);
+  bindDept(el, renderStats);
   $("#delBtn")?.addEventListener("click", deleteData);
   $("#csvBtn").onclick = () => {
     const head = ["Doctor", "Section", ...dates, "Total", "No-show"];
@@ -440,9 +445,21 @@ function renderStats() {
     const csv = "﻿" + lines.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    a.download = `sessions-${state.statsMonth}.csv`; a.click();
+    a.download = `sessions-${state.statsMonth}${state.dept === "all" ? "" : "-" + state.dept}.csv`; a.click();
   };
   if (state.admin) el.querySelectorAll("th.day").forEach(th => th.onclick = () => { watchDay(th.dataset.date); setView("today"); });
+}
+
+const inDept = name => state.dept === "all" || name === state.dept;
+function deptChips(names) {
+  if (state.dept !== "all" && !names.includes(state.dept)) state.dept = "all";
+  return `<div class="chips">${["all", ...names].map(n => `<button class="chip ${state.dept === n ? "active" : ""}" data-dfilter="${esc(n)}">${n !== "all" && deptColor(n) ? `<span class="dot" style="background:${deptColor(n)}"></span>` : ""}${n === "all" ? "كل الأقسام" : esc(n)}</button>`).join("")}</div>`;
+}
+function bindDept(el, rerender) {
+  el.querySelectorAll("[data-dfilter]").forEach(b => b.onclick = () => {
+    state.dept = state.dept === b.dataset.dfilter && b.dataset.dfilter !== "all" ? "all" : b.dataset.dfilter;
+    rerender();
+  });
 }
 
 function deptSummary(list, M) {
@@ -453,7 +470,7 @@ function deptSummary(list, M) {
   }
   const rows = Object.entries(by).sort((a, b) => b[1].att - a[1].att);
   return `<div class="dept-cards">${rows.map(([n, o]) => `
-    <div class="card dept-card" ${dcStyle(n)}>
+    <div class="card dept-card ${state.dept === n ? "active" : ""}" data-dfilter="${esc(n)}" role="button" title="اعرض القسم ده بس" ${dcStyle(n)}>
       <div class="k">${deptColor(n) ? `<span class="dot" style="background:${deptColor(n)}"></span>` : ""}<b dir="ltr">${esc(n)}</b></div>
       <div class="v">${o.att}</div>
       <div class="s">${M.many} · ${o.docs} دكتور · غياب ${o.ns}</div>
@@ -510,22 +527,30 @@ function renderAnalysis() {
   const bind = () => {
     el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; renderAnalysis(); });
     bindMetric(el, renderAnalysis);
+    bindDept(el, renderAnalysis);
   };
   if (!stats.length) {
     el.innerHTML = filters + `<div class="empty"><div class="big">📈</div><h2>مفيش داتا في الفترة دي</h2><p>الأرقام بتبدأ من أول يوم الدكاترة يعملوا فيه Submit. جرّب «كل الفترة».</p></div>`;
     bind();
     return;
   }
-  const rows = rowsFrom(stats);
+  const rowsAll = rowsFrom(stats);
+  const deptBar = deptChips([...new Set(rowsAll.map(deptOf))].sort());
+  const rows = rowsAll.filter(r => inDept(deptOf(r)));
+  if (!rows.length) {
+    el.innerHTML = filters + `<div class="toolbar"><span class="field">القسم:</span>${deptBar}</div><div class="empty"><h2>مفيش داتا للقسم ده في الفترة دي</h2></div>`;
+    bind();
+    return;
+  }
   const docs = byDoctor(rows);
   const att = docs.reduce((a, d) => a + d.attended, 0);
   const ns = docs.reduce((a, d) => a + d.noShow, 0);
   const cases = rows.reduce((a, r) => a + (r.cases ?? r.attended), 0);
   const rate = cases + ns ? Math.round(cases / (cases + ns) * 100) : 0;
   const perDay = stats.map(s => {
-    const v = Object.values(s.doctors);
+    const v = rows.filter(r => r.date === s.date);
     return { date: s.date, att: v.reduce((a, d) => a + valOf(d), 0), ns: v.reduce((a, d) => a + d.noShow, 0) };
-  });
+  }).filter(d => d.att || d.ns);
   const best = perDay.reduce((a, b) => b.att > a.att ? b : a);
   const secMap = {};
   rows.forEach(r => { const k = deptOf(r); secMap[k] = (secMap[k] || 0) + valOf(r); });
@@ -535,9 +560,10 @@ function renderAnalysis() {
   const avgDoc = Math.round(att / Math.max(1, rows.length) * 10) / 10;
 
   el.innerHTML = filters + `
+    <div class="toolbar"><span class="field">القسم:</span>${deptBar}</div>
     <div class="kpis">
-      <div class="card kpi"><div class="k">إجمالي ${M.many}</div><div class="v">${att}</div><div class="s">في ${stats.length} يوم</div></div>
-      <div class="card kpi"><div class="k">متوسط ${M.many} في اليوم</div><div class="v">${Math.round(att / stats.length)}</div><div class="s">أعلى يوم: ${best.att} (${shortDate(best.date)})</div></div>
+      <div class="card kpi"><div class="k">إجمالي ${M.many}</div><div class="v">${att}</div><div class="s">في ${perDay.length} يوم</div></div>
+      <div class="card kpi"><div class="k">متوسط ${M.many} في اليوم</div><div class="v">${Math.round(att / Math.max(1, perDay.length))}</div><div class="s">أعلى يوم: ${best.att} (${shortDate(best.date)})</div></div>
       <div class="card kpi"><div class="k">متوسط الدكتور في اليوم</div><div class="v">${avgDoc}</div><div class="s">${M.one} · ${docs.length} دكتور اشتغلوا</div></div>
       <div class="card kpi"><div class="k">نسبة الحضور</div><div class="v">${rate}%</div><div class="s">${ns} مريض محضرش</div></div>
       <div class="card kpi"><div class="k">أكتر دكتور ${M.many}</div><div class="v" style="font-size:22px;direction:ltr;text-align:right">${esc(docs[0].name)}</div><div class="s">${docs[0].attended} ${M.one} · ${docs[0].days} يوم</div></div>

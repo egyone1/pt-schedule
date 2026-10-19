@@ -257,3 +257,7 @@ dialog h3 { font-size: 18px; margin-bottom: 10px; }
   .progress { min-width: 0; width: 100%; }
   .board { max-height: calc(100vh - 290px); }
 }
+
+.dept-card { cursor: pointer; transition: transform .08s, box-shadow .12s; }
+.dept-card:hover { box-shadow: 0 0 0 2px var(--line-strong); }
+.dept-card.active { box-shadow: 0 0 0 2px var(--dc, var(--brand)); background: color-mix(in srgb, var(--dc, var(--brand)) 10%, var(--surface)); }
