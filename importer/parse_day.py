@@ -172,6 +172,20 @@ def parse_day(path_or_wb, day):
                 "submitted": False,
                 "sessions": sessions,
             })
+    # Two columns with the same name on one day: when their extension numbers differ
+    # (Menna 182 / Menna 183) they are different people, so keep the number in the name.
+    # Same number (Monica 88 / Monica 088) = the same doctor in two sections.
+    def ext(c):
+        m = re.search(r"\d+", str(ws.cell(3, c).value or ""))
+        return str(int(m.group())) if m else ""
+    by_name = {}
+    for d in doctors:
+        by_name.setdefault(d["name"], []).append(d)
+    for same in by_name.values():
+        if len({ext(d["order"]) for d in same}) > 1:
+            for d in same:
+                if ext(d["order"]):
+                    d["name"] = "%s %s" % (d["name"], ext(d["order"]))
     return {"date": day.isoformat(), "sheet": ws.title.strip(), "doctors": doctors}
 
 

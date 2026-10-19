@@ -1,11 +1,11 @@
-"""Nightly job (GitHub Actions, 9 PM Cairo).
+"""Daily job (GitHub Actions).
 
-1. close any day that is still open (doctors who did not submit keep what they marked)
-2. download the booking workbook from the SharePoint share link
-3. build today's schedule and store it as days/<date> with every session white
+9 AM Cairo: close any older day still open (doctors who did not submit keep what they
+            marked), then build today's schedule from the booking workbook - all white.
+9 PM Cairo: read today's tab again; the latest version is the final schedule.
 
 Env: SHARE_URL, FIREBASE_API_KEY, FIREBASE_PROJECT, IMPORTER_EMAIL, IMPORTER_PASSWORD
-     FORCE=1 to run outside the 9 PM window, DAY=YYYY-MM-DD to import another day.
+     MODE=open|final to run outside the time windows, DAY=YYYY-MM-DD for another day.
 """
 import datetime as dt
 import http.cookiejar
@@ -56,28 +56,74 @@ def summarize(day):
     return out
 
 
+def _sig(sess):
+    return (sess["start"], sess["end"], re.sub(r"\s+", " ", sess["patient"]).strip())
+
+
+def merge_final(live, parsed):
+    """9 PM: the sheet's latest version becomes the final schedule.
+
+    Marks are kept for every session that is still there (same time + patient).
+    A doctor whose list of sessions did not change keeps their Submit; a doctor
+    whose schedule changed is un-submitted (with a note) so they review it again.
+    Returns (new doctors map, names of doctors whose schedule changed).
+    """
+    old_by_name = {d["name"]: d for d in (live.get("doctors") or {}).values()}
+    doctors, changed = {}, []
+    for d in parsed["doctors"]:
+        old = old_by_name.get(d["name"])
+        if old:
+            marks = {_sig(x): x.get("status", 0) for x in old.get("sessions", [])}
+            for x in d["sessions"]:
+                x["status"] = marks.get(_sig(x), 0)
+            same = sorted(map(_sig, old.get("sessions", []))) == sorted(map(_sig, d["sessions"]))
+            if same:
+                for k in ("submitted", "submittedAt"):
+                    if k in old:
+                        d[k] = old[k]
+            else:
+                changed.append(d["name"])
+                d["changedAt"] = dt.datetime.now(CAIRO).isoformat()
+                d["submitted"] = False
+        else:
+            changed.append(d["name"])
+        doctors[d["key"]] = d
+    return doctors, changed
+
+
+def close_day(db, date, doc):
+    db.set("stats/" + date, {"date": date, "doctors": summarize(doc), "autoClosed": True})
+    db.update("days/" + date, {"status": "closed", "autoClosed": True,
+                               "closedAt": dt.datetime.now(CAIRO).isoformat()})
+    print("auto-closed", date)
+
+
 def main():
+    """MODE=open (9 AM): close yesterday, create today's schedule.
+       MODE=final (9 PM): re-read today's tab, it becomes the final schedule.
+       Without MODE the Cairo hour decides (9-10 -> open, 21-22 -> final)."""
     now = dt.datetime.now(CAIRO)
-    force = os.environ.get("FORCE") == "1"
-    if not force and now.hour not in (21, 22):
-        print("not 9 PM in Cairo (%s) - nothing to do" % now.strftime("%H:%M"))
+    mode = os.environ.get("MODE") or {9: "open", 10: "open", 21: "final", 22: "final"}.get(now.hour)
+    if not mode:
+        print("nothing to do at %s Cairo" % now.strftime("%H:%M"))
         return
     day = dt.date.fromisoformat(os.environ["DAY"]) if os.environ.get("DAY") else now.date()
+    date = day.isoformat()
 
     token = sign_in(os.environ["FIREBASE_API_KEY"], os.environ["IMPORTER_EMAIL"], os.environ["IMPORTER_PASSWORD"])
     db = Firestore(os.environ["FIREBASE_PROJECT"], token)
 
-    if db.get("days/" + day.isoformat()) is not None:
-        print("days/%s already exists - skipping" % day)
+    if mode == "open":
+        for d, doc in db.query_eq("days", "status", "open"):
+            if d < date:
+                close_day(db, d, doc)
+    live = db.get("days/" + date)
+    if mode == "open" and live is not None:
+        print("days/%s already exists - skipping" % date)
         return
-
-    for date, doc in db.query_eq("days", "status", "open"):
-        if date >= day.isoformat():
-            continue
-        db.set("stats/" + date, {"date": date, "doctors": summarize(doc), "autoClosed": True})
-        db.update("days/" + date, {"status": "closed", "autoClosed": True,
-                                   "closedAt": dt.datetime.now(CAIRO).isoformat()})
-        print("auto-closed", date)
+    if mode == "final" and live and live.get("finalAt") and not os.environ.get("MODE"):
+        print("final schedule for %s already taken at %s - skipping" % (date, live["finalAt"]))
+        return
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "book.xlsx")
@@ -87,11 +133,25 @@ def main():
         print("no tab for %s in the workbook - nothing imported" % day)
         return
 
-    parsed.update({"status": "open", "importedAt": dt.datetime.now(CAIRO).isoformat()})
-    parsed["doctors"] = {d["key"]: d for d in parsed["doctors"]}
-    db.set("days/" + day.isoformat(), parsed)
-    print("imported %s: %d doctors, %d sessions" % (
-        parsed["sheet"], len(parsed["doctors"]), sum(len(d["sessions"]) for d in parsed["doctors"].values())))
+    stamp = dt.datetime.now(CAIRO).isoformat()
+    if mode == "open" or live is None:
+        parsed.update({"status": "open", "importedAt": stamp})
+        parsed["doctors"] = {d["key"]: d for d in parsed["doctors"]}
+        db.set("days/" + date, parsed)
+        print("imported %s: %d doctors, %d sessions" % (
+            parsed["sheet"], len(parsed["doctors"]), sum(len(d["sessions"]) for d in parsed["doctors"].values())))
+        return
+
+    doctors, changed = merge_final(live, parsed)
+    live.update({"doctors": doctors, "finalAt": stamp, "sheet": parsed["sheet"]})
+    if changed and live.get("status") == "closed":
+        live["status"] = "open"                      # someone has to re-check a changed schedule
+    elif live.get("status") == "open" and all(d.get("submitted") for d in doctors.values()):
+        live["status"] = "closed"; live["closedAt"] = stamp
+    db.set("days/" + date, live)
+    if live["status"] == "closed":
+        db.set("stats/" + date, {"date": date, "doctors": summarize(live)})
+    print("final schedule for %s: %d doctors, changed: %s" % (date, len(doctors), ", ".join(changed) or "none"))
 
 
 if __name__ == "__main__":

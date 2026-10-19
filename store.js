@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=4";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=5";
 
 export function summarize(day) {
   const out = {};
@@ -53,9 +53,9 @@ async function firebaseStore() {
       return fs.onSnapshot(fs.doc(db, "settings", "departments"), s => cb(s.exists() ? s.data() : {}));
     },
     saveSettings: data => fs.setDoc(fs.doc(db, "settings", "departments"), data),
-    async setSessions(date, key, sessions) {
+    async setSessions(date, key, sessions, dayClosed) {
       await fs.updateDoc(dayRef(date), { [`doctors.${key}.sessions`]: sessions, updatedAt: nowIso() });
-      await this._restat(date);
+      if (dayClosed) await this._restat(date);         // totals only change once the day is closed
     },
     async setSubmitted(date, key, value) {
       // returns true when this submit closed the day

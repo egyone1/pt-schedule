@@ -139,7 +139,7 @@ main { padding: 18px 20px 40px; max-width: 1600px; margin: 0 auto; }
 .timecol { position: sticky; right: 0; z-index: 6; background: var(--surface); border-left: 1px solid var(--line); width: var(--timecol); flex: none; }
 .col { width: var(--col); flex: none; border-left: 1px solid var(--line); }
 .col-head, .time-head {
-  position: sticky; top: 0; z-index: 5; background: var(--surface); height: 86px; padding: 8px 10px;
+  position: sticky; top: 0; z-index: 5; background: var(--surface); height: 108px; padding: 8px 10px;
   border-bottom: 1px solid var(--line-strong);
 }
 .time-head { z-index: 7; }
@@ -261,3 +261,6 @@ dialog h3 { font-size: 18px; margin-bottom: 10px; }
 .dept-card { cursor: pointer; transition: transform .08s, box-shadow .12s; }
 .dept-card:hover { box-shadow: 0 0 0 2px var(--line-strong); }
 .dept-card.active { box-shadow: 0 0 0 2px var(--dc, var(--brand)); background: color-mix(in srgb, var(--dc, var(--brand)) 10%, var(--surface)); }
+
+.changed { margin-top: 4px; font-size: 11px; font-weight: 700; color: #8a5a00; background: var(--warn-bg); border-radius: 6px; padding: 2px 6px; line-height: 1.4; }
+.mine .changed { font-size: 13px; padding: 6px 10px; margin-bottom: 8px; }

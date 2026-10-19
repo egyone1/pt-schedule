@@ -1,17 +1,24 @@
 name: Nightly schedule import
 
-# 9 PM Cairo = 18:00 UTC in summer time, 19:00 UTC in winter time.
-# Several runs are scheduled; the script only imports once per day (inside the 21:00-22:59 window).
+# 9 AM Cairo opens today's schedule, 9 PM Cairo re-reads it as the final version.
+# Cairo is UTC+3 in summer time and UTC+2 in winter, so each time has runs for both;
+# the script checks the Cairo hour and only acts inside 9-10 AM / 9-10 PM (and only once).
 on:
   schedule:
-    - cron: "0 18 * * *"
-    - cron: "30 18 * * *"
-    - cron: "0 19 * * *"
-    - cron: "30 19 * * *"
+    - cron: "0 6,7 * * *"
+    - cron: "30 6,7 * * *"
+    - cron: "0 18,19 * * *"
+    - cron: "40 19 * * *"
   workflow_dispatch:
     inputs:
+      mode:
+        description: "open (create today's schedule) or final (re-read the sheet)"
+        required: true
+        default: "open"
+        type: choice
+        options: [open, final]
       day:
-        description: "Day to import YYYY-MM-DD (empty = today)"
+        description: "Day YYYY-MM-DD (empty = today)"
         required: false
 
 permissions:
@@ -37,7 +44,7 @@ jobs:
           FIREBASE_PROJECT: ${{ secrets.FIREBASE_PROJECT }}
           IMPORTER_EMAIL: ${{ secrets.IMPORTER_EMAIL }}
           IMPORTER_PASSWORD: ${{ secrets.IMPORTER_PASSWORD }}
-          FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          MODE: ${{ inputs.mode }}
           DAY: ${{ inputs.day }}
       # GitHub pauses scheduled workflows after 60 days without commits - keep this one on.
       - name: Keep the schedule enabled

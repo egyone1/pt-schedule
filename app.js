@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=4";
-import { ADMIN_EMAIL } from "./config.js?v=4";
+import { createStore } from "./store.js?v=5";
+import { ADMIN_EMAIL } from "./config.js?v=5";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -13,7 +13,7 @@ const fmtTime = m => { const h = Math.floor(m / 60), mm = String(m % 60).padStar
 const arDate = (iso, opts = { weekday: "long", day: "numeric", month: "long" }) =>
   new Date(iso + "T12:00:00").toLocaleDateString("ar-EG-u-nu-latn", opts);
 const shortDate = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-const idName = n => String(n || "").toLowerCase().replace(/[^a-z؀-ۿ]+/g, " ").trim();
+const idName = n => String(n || "").toLowerCase().replace(/[^a-z0-9؀-ۿ]+/g, " ").trim();
 
 const state = {
   store: null, admin: false, view: "today",
@@ -38,6 +38,7 @@ function modal(title, html, { ok = "تمام", cancel = "إلغاء", danger = f
     $("#modalOk").className = danger ? "danger" : "primary";
     $("#modalCancel").textContent = cancel;
     $("#modalCancel").hidden = !cancel;
+    d.returnValue = "";                     // Esc must never count as "ok"
     d.onclose = () => res(d.returnValue === "ok" ? d : null);
     d.showModal();
     d.querySelector("input")?.focus();
@@ -90,8 +91,12 @@ function onOpenDays(days) {
 
 /* ---------------- departments (admin) ---------------- */
 const PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
-// the department the admin put the doctor in, else the section from the sheet
-const deptOf = d => (state.settings.assign || {})[idName(d.name)] || d.section || "—";
+// only the departments the admin chose; a doctor not put in one yet is "بدون قسم"
+const NO_DEPT = "بدون قسم";
+const deptOf = d => {
+  const dep = (state.settings.assign || {})[idName(d.name)];
+  return dep && (state.settings.depts || {})[dep] ? dep : NO_DEPT;
+};
 const deptColor = name => (state.settings.depts || {})[name] || "";
 const dcStyle = name => deptColor(name) ? `style="--dc:${deptColor(name)}"` : "";
 
@@ -111,7 +116,7 @@ async function assignDept(name, value) {
   }
   if (value) assign[idName(name)] = value; else delete assign[idName(name)];
   await saveSettings({ depts, assign });
-  toast(value ? `${name} اتحط في ${value}` : `${name} رجع لقسم الشيت`);
+  toast(value ? `${name} اتحط في ${value}` : `${name} اتشال من القسم`);
 }
 async function manageDepts() {
   const depts = { ...(state.settings.depts || {}) };
@@ -161,11 +166,23 @@ function sessHTML(doc, s, top, height) {
     <span class="t">${fmtTime(toMin(s.start))} – ${fmtTime(toMin(s.end))}</span>
     ${s.details ? `<span class="d">${esc(s.details)}</span>` : ""}</button>`;
 }
+// Cairo clock (the site may be opened on a phone set to another zone)
+function cairoNow() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, hour: +p.hour % 24 };
+}
+const SUBMIT_FROM = 15;   // doctors can submit from 3 PM on the day itself
+const submitLocked = () => !state.admin && state.day && state.day.date === cairoNow().date && cairoNow().hour < SUBMIT_FROM;
+const changedNote = d => d.changedAt && !d.submitted
+  ? `<div class="changed">⚠ الجدول اتغيّر الساعة 9 — راجعه واعمل Submit تاني</div>` : "";
+
 function submitBtn(doc) {
   if (doc.submitted)
     return state.admin
       ? `<button class="ghost" data-unsubmit="${esc(doc.key)}">✓ اتعمل Submit · إلغاء</button>`
       : `<button class="ghost" disabled>✓ اتعمل Submit</button>`;
+  if (submitLocked()) return `<button class="primary" disabled title="الـ Submit بيفتح الساعة 3 العصر">Submit من الساعة 3</button>`;
   const dis = state.day.status !== "open" && !state.admin ? "disabled" : "";
   return `<button class="primary" data-submit="${esc(doc.key)}" ${dis}>Submit</button>`;
 }
@@ -177,8 +194,8 @@ function renderToday() {
   if (!day) {
     el.innerHTML = adminBar + `<div class="empty"><div class="big">🗓️</div>
       <h2>مفيش جدول مفتوح دلوقتي</h2>
-      <p>جدول اليوم بيتعمل أوتوماتيك كل يوم الساعة <b>9 بالليل</b> من شيت السكرتارية.<br>
-      لما كل الدكاترة يعملوا Submit الجدول بيتقفل والأرقام بتروح لتاب الإحصائيات.</p></div>`;
+      <p>جدول اليوم بيظهر أوتوماتيك كل يوم الساعة <b>9 الصبح</b> من شيت السكرتارية، والـ Submit بيفتح الساعة <b>3 العصر</b>.<br>
+      الساعة <b>9 بالليل</b> الجدول بيتحدّث بآخر تعديل في الشيت ويبقى هو النهائي.</p></div>`;
     bindAdminBar();
     return;
   }
@@ -193,7 +210,7 @@ function renderToday() {
   const keep = { left: oldBoard?.scrollLeft, top: oldBoard?.scrollTop, y: window.scrollY };
 
   const statusLine = day.status === "open"
-    ? `مفتوح · اتسحب من تاب «${esc(day.sheet)}»`
+    ? `مفتوح · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : "هيتحدّث بآخر تعديل الساعة 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
     : `<b style="color:var(--brand)">مقفول ✓</b>${day.autoClosed ? " (اتقفل أوتوماتيك)" : ""}`;
 
   el.innerHTML = `${adminBar}
@@ -255,6 +272,7 @@ function gridHTML(docs) {
         <div class="nm" title="${esc(d.name)}">${esc(d.name)}</div>
         ${state.admin ? deptSelect(d) : `<div class="sec">${esc(deptOf(d))} ${d.submitted ? '<span class="badge">· Submit ✓</span>' : ""}</div>`}
         <div class="cnt"><span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span></div>
+        ${changedNote(d)}
       </div>
       <div class="slots slot-bg" style="height:${h}px">
         ${d.sessions.map(s => sessHTML(d, s, (toMin(s.start) - start) / 15 * row + 1, s.minutes / 15 * row - 3)).join("")}
@@ -273,7 +291,7 @@ function deptSelect(d) {
   const cur = (state.settings.assign || {})[idName(d.name)] || "";
   const opts = Object.keys(state.settings.depts || {}).map(n => `<option value="${esc(n)}" ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
   return `<select class="dept-sel" data-dept="${esc(d.name)}" title="القسم">
-    <option value="">${esc(d.section || "—")} (من الشيت)</option>${opts}<option value="__new">+ قسم جديد…</option></select>`;
+    <option value="">${NO_DEPT}</option>${opts}<option value="__new">+ قسم جديد…</option></select>`;
 }
 
 function mineHTML(d) {
@@ -281,6 +299,7 @@ function mineHTML(d) {
   return `<div class="mine"><div class="card">
     <div class="hdr"><h3>${esc(d.name)}</h3>
       <span style="font-size:13px;color:var(--text-2)">✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}</span></div>
+    ${changedNote(d)}
     <div class="list">${d.sessions.map(s => sessHTML(d, s)).join("")}</div>
   </div><div class="foot">${submitBtn(d)}</div></div>`;
 }
@@ -301,7 +320,7 @@ async function cycle(key, id) {
   if (cnt) cnt.innerHTML = `<span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span>`;
   const mc = document.querySelector(".mine .hdr span");
   if (mc) mc.textContent = `✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}`;
-  try { await state.store.setSessions(day.date, key, sessions); }
+  try { await state.store.setSessions(day.date, key, sessions, day.status === "closed"); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
 
@@ -501,11 +520,12 @@ async function deleteData() {
 
 /* ---------------- ANALYSIS ---------------- */
 function periodFilter(stats) {
-  const today = new Date().toISOString().slice(0, 10);
-  const back = n => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = iso(new Date());
+  const back = n => { const d = new Date(); d.setDate(d.getDate() - n); return iso(d); };
   const thisM = today.slice(0, 7);
   const lastMd = new Date(); lastMd.setDate(1); lastMd.setMonth(lastMd.getMonth() - 1);
-  const lastM = lastMd.toISOString().slice(0, 7);
+  const lastM = iso(lastMd).slice(0, 7);
   return {
     month: s => s.date.startsWith(thisM),
     last: s => s.date.startsWith(lastM),
