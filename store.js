@@ -11,6 +11,7 @@ export function summarize(day) {
       submitted: !!d.submitted,
       booked: ss.reduce((a, s) => a + (s.units || 1), 0),
       attended: ss.filter(s => s.status === 1).reduce((a, s) => a + (s.units || 1), 0),
+      cases: ss.filter(s => s.status === 1).length,
       noShow: ss.filter(s => s.status === 2).length,
       unmarked: ss.filter(s => !s.status).length,
     };
@@ -77,6 +78,13 @@ async function firebaseStore() {
       if (status === "closed") batch.set(fs.doc(db, "stats", date), { date, doctors: summarize(day) });
       await batch.commit();
     },
+    async deleteDays(dates) {
+      for (let i = 0; i < dates.length; i += 200) {
+        const batch = fs.writeBatch(db);
+        for (const d of dates.slice(i, i + 200)) { batch.delete(dayRef(d)); batch.delete(fs.doc(db, "stats", d)); }
+        await batch.commit();
+      }
+    },
     async _restat(date) {
       const snap = await fs.getDoc(dayRef(date));
       const day = snap.data();
@@ -131,6 +139,10 @@ async function demoStore() {
       const day = data.days[date];
       day.status = status;
       if (status === "closed") data.stats[date] = { date, doctors: summarize(day) };
+      save();
+    },
+    async deleteDays(dates) {
+      for (const d of dates) { delete data.days[d]; delete data.stats[d]; }
       save();
     },
     resetDemo() { localStorage.removeItem(KEY); location.reload(); },

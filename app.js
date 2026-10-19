@@ -19,7 +19,7 @@ const state = {
   store: null, admin: false, view: "today",
   openDays: [], day: null, viewDate: null, unsubDay: null,
   stats: [], section: "all", me: ls.get("me", ""),
-  statsMonth: "", period: "month", charts: [],
+  statsMonth: "", period: "month", charts: [], metric: ls.get("metric", "sessions"),
 };
 
 /* ---------------- ui helpers ---------------- */
@@ -282,13 +282,25 @@ function rowsFrom(statsDocs) {
       rows.push({ date: s.date, ...d, id: idName(d.name) });
   return rows;
 }
+// "sessions" = a session over 1h15 counts twice; "cases" = every attended patient counts once
+const METRICS = { sessions: { one: "جلسة", many: "الجلسات" }, cases: { one: "حالة", many: "الحالات" } };
+const valOf = r => state.metric === "cases" ? (r.cases ?? r.attended) : r.attended;
+function metricChips() {
+  return `<div class="chips">${Object.entries(METRICS).map(([k, m]) =>
+    `<button class="chip ${state.metric === k ? "active" : ""}" data-metric="${k}">${m.many}</button>`).join("")}</div>`;
+}
+function bindMetric(el, rerender) {
+  el.querySelectorAll("[data-metric]").forEach(b => b.onclick = () => { state.metric = b.dataset.metric; ls.set("metric", state.metric); rerender(); });
+}
+
 function byDoctor(rows) {
   const m = new Map();
   for (const r of rows) {
     const o = m.get(r.id) || { name: r.name, section: r.section, attended: 0, noShow: 0, booked: 0, days: 0, perDay: {} };
     o.section = r.section || o.section;            // rows are date-ordered -> latest section wins
-    o.attended += r.attended; o.noShow += r.noShow; o.booked += r.booked; o.days += 1;
-    o.perDay[r.date] = (o.perDay[r.date] || 0) + r.attended;
+    o.cases = (o.cases || 0) + (r.cases ?? r.attended);
+    o.attended += valOf(r); o.noShow += r.noShow; o.booked += r.booked; o.days += 1;
+    o.perDay[r.date] = (o.perDay[r.date] || 0) + valOf(r);
     if (!o.noShowDay) o.noShowDay = {};
     o.noShowDay[r.date] = (o.noShowDay[r.date] || 0) + r.noShow;
     m.set(r.id, o);
@@ -311,9 +323,14 @@ function renderStats() {
   const tot = list.reduce((a, d) => ({ att: a.att + d.attended, ns: a.ns + d.noShow }), { att: 0, ns: 0 });
   const pct = (a, n) => a + n ? Math.round(a / (a + n) * 100) + "%" : "—";
 
+  const M = METRICS[state.metric];
   el.innerHTML = `<div class="toolbar">
-      <div class="day-title"><h2>الإحصائيات</h2><div class="sub">عدد الجلسات اللي حضرت لكل دكتور في كل يوم (الجلسة الأطول من ساعة وربع = جلستين)</div></div>
+      <div class="day-title"><h2>الإحصائيات</h2><div class="sub">${state.metric === "cases"
+        ? "عدد الحالات اللي حضرت لكل دكتور في كل يوم (كل مريض = حالة واحدة)"
+        : "عدد الجلسات اللي حضرت لكل دكتور في كل يوم (الجلسة الأطول من ساعة وربع = جلستين)"}</div></div>
       <div class="spacer"></div>
+      ${metricChips()}
+      ${state.admin ? `<button class="danger" id="delBtn">🗑 مسح داتا</button>` : ""}
       <label class="field">الشهر:
         <select id="monthSel">${months.map(m => `<option value="${m}" ${m === state.statsMonth ? "selected" : ""}>${new Date(m + "-15").toLocaleDateString("ar-EG-u-nu-latn", { month: "long", year: "numeric" })}</option>`).join("")}</select></label>
       <button class="ghost" id="csvBtn">⬇ Excel (CSV)</button>
@@ -321,7 +338,7 @@ function renderStats() {
     <div class="card"><div class="table-wrap"><table class="stats">
       <thead><tr><th class="nm">الدكتور</th><th>القسم</th>
         ${dates.map(d => `<th class="day ${state.admin ? "link" : ""}" data-date="${d}" title="${arDate(d)}">${shortDate(d)}</th>`).join("")}
-        <th>إجمالي الجلسات</th><th>غياب</th><th>نسبة الحضور</th></tr></thead>
+        <th>إجمالي ${M.many}</th><th>غياب</th><th>نسبة الحضور</th></tr></thead>
       <tbody>${list.map(d => `<tr><td class="nm">${esc(d.name)}</td><td style="direction:ltr">${esc(d.section || "—")}</td>
         ${dates.map(dt => {
           const v = d.perDay[dt];
@@ -334,6 +351,8 @@ function renderStats() {
     </table></div></div>`;
 
   $("#monthSel").onchange = e => { state.statsMonth = e.target.value; renderStats(); };
+  bindMetric(el, renderStats);
+  $("#delBtn")?.addEventListener("click", deleteData);
   $("#csvBtn").onclick = () => {
     const head = ["Doctor", "Section", ...dates, "Total", "No-show"];
     const lines = [head, ...list.map(d => [d.name, d.section, ...dates.map(dt => d.perDay[dt] ?? ""), d.attended, d.noShow])];
@@ -343,6 +362,28 @@ function renderStats() {
     a.download = `sessions-${state.statsMonth}.csv`; a.click();
   };
   if (state.admin) el.querySelectorAll("th.day").forEach(th => th.onclick = () => { watchDay(th.dataset.date); setView("today"); });
+}
+
+async function deleteData() {
+  const all = [...new Set([...state.stats.map(s => s.date), ...state.openDays.map(d => d.date)])].sort();
+  if (!all.length) { toast("مفيش داتا"); return; }
+  const opt = d => `<option value="${d}">${arDate(d, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</option>`;
+  const d = await modal("مسح داتا",
+    `اختار الأيام اللي هتتمسح (الجدول + الأرقام بتوعها). <b>المسح مش بيرجع.</b>
+     <div style="display:grid;gap:8px;margin-top:10px">
+       <label class="field">من: <select id="delFrom" style="flex:1">${all.map(opt).join("")}</select></label>
+       <label class="field">لحد: <select id="delTo" style="flex:1">${all.map(opt).join("")}</select></label>
+     </div>`, { ok: "كمّل", danger: true });
+  if (!d) return;
+  let from = d.querySelector("#delFrom").value, to = d.querySelector("#delTo").value;
+  if (from > to) [from, to] = [to, from];
+  const dates = all.filter(x => x >= from && x <= to);
+  const sure = await modal("متأكد؟",
+    `هيتمسح <b>${dates.length}</b> يوم: من ${arDate(from)} لحد ${arDate(to)}.<br>اكتب <b>مسح</b> للتأكيد:<input id="confirmTxt">`,
+    { ok: "امسح", danger: true });
+  if (!sure || sure.querySelector("#confirmTxt").value.trim() !== "مسح") { toast("متمسحش حاجة"); return; }
+  try { await state.store.deleteDays(dates); toast(`اتمسح ${dates.length} يوم ✓`); }
+  catch (e) { console.error(e); toast("المسح فشل — جرّب تاني"); }
 }
 
 /* ---------------- ANALYSIS ---------------- */
@@ -367,47 +408,58 @@ function renderAnalysis() {
   const el = $("#view-analysis");
   const stats = state.stats.filter(periodFilter(state.stats)).sort((a, b) => a.date.localeCompare(b.date));
   const periods = [["month", "الشهر ده"], ["last", "الشهر اللي فات"], ["d30", "آخر 30 يوم"], ["all", "كل الفترة"]];
+  const M = METRICS[state.metric];
   const filters = `<div class="toolbar"><div class="day-title"><h2>Analysis</h2><div class="sub">الأرقام من الأيام المقفولة بس</div></div>
-    <div class="spacer"></div><div class="chips">${periods.map(([k, l]) => `<button class="chip ${state.period === k ? "active" : ""}" data-p="${k}">${l}</button>`).join("")}</div></div>`;
-  if (!stats.length) {
-    el.innerHTML = filters + `<div class="empty"><div class="big">📈</div><h2>مفيش داتا في الفترة دي</h2><p>جرّب «كل الفترة».</p></div>`;
+    <div class="spacer"></div>${metricChips()}<div class="chips">${periods.map(([k, l]) => `<button class="chip ${state.period === k ? "active" : ""}" data-p="${k}">${l}</button>`).join("")}</div></div>`;
+  const bind = () => {
     el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; renderAnalysis(); });
+    bindMetric(el, renderAnalysis);
+  };
+  if (!stats.length) {
+    el.innerHTML = filters + `<div class="empty"><div class="big">📈</div><h2>مفيش داتا في الفترة دي</h2><p>الأرقام بتبدأ من أول يوم الدكاترة يعملوا فيه Submit. جرّب «كل الفترة».</p></div>`;
+    bind();
     return;
   }
   const rows = rowsFrom(stats);
   const docs = byDoctor(rows);
   const att = docs.reduce((a, d) => a + d.attended, 0);
   const ns = docs.reduce((a, d) => a + d.noShow, 0);
-  const rate = att + ns ? Math.round(att / (att + ns) * 100) : 0;
+  const cases = rows.reduce((a, r) => a + (r.cases ?? r.attended), 0);
+  const rate = cases + ns ? Math.round(cases / (cases + ns) * 100) : 0;
   const perDay = stats.map(s => {
     const v = Object.values(s.doctors);
-    return { date: s.date, att: v.reduce((a, d) => a + d.attended, 0), ns: v.reduce((a, d) => a + d.noShow, 0) };
+    return { date: s.date, att: v.reduce((a, d) => a + valOf(d), 0), ns: v.reduce((a, d) => a + d.noShow, 0) };
   });
   const best = perDay.reduce((a, b) => b.att > a.att ? b : a);
   const secMap = {};
-  rows.forEach(r => { const k = r.section || "—"; secMap[k] = (secMap[k] || 0) + r.attended; });
+  rows.forEach(r => { const k = r.section || "—"; secMap[k] = (secMap[k] || 0) + valOf(r); });
   const secs = Object.entries(secMap).sort((a, b) => b[1] - a[1]);
-  const worstNs = [...docs].filter(d => d.attended + d.noShow >= 5).sort((a, b) => b.noShow / (b.attended + b.noShow) - a.noShow / (a.attended + a.noShow))[0];
+  const nsRate = d => d.noShow / ((d.cases || d.attended) + d.noShow);
+  const worstNs = [...docs].filter(d => d.attended + d.noShow >= 5).sort((a, b) => nsRate(b) - nsRate(a))[0];
+  const avgDoc = Math.round(att / Math.max(1, rows.length) * 10) / 10;
 
   el.innerHTML = filters + `
     <div class="kpis">
-      <div class="card kpi"><div class="k">إجمالي الجلسات</div><div class="v">${att}</div><div class="s">في ${stats.length} يوم</div></div>
-      <div class="card kpi"><div class="k">متوسط الجلسات في اليوم</div><div class="v">${Math.round(att / stats.length)}</div><div class="s">أعلى يوم: ${best.att} (${shortDate(best.date)})</div></div>
+      <div class="card kpi"><div class="k">إجمالي ${M.many}</div><div class="v">${att}</div><div class="s">في ${stats.length} يوم</div></div>
+      <div class="card kpi"><div class="k">متوسط ${M.many} في اليوم</div><div class="v">${Math.round(att / stats.length)}</div><div class="s">أعلى يوم: ${best.att} (${shortDate(best.date)})</div></div>
+      <div class="card kpi"><div class="k">متوسط الدكتور في اليوم</div><div class="v">${avgDoc}</div><div class="s">${M.one} · ${docs.length} دكتور اشتغلوا</div></div>
       <div class="card kpi"><div class="k">نسبة الحضور</div><div class="v">${rate}%</div><div class="s">${ns} مريض محضرش</div></div>
-      <div class="card kpi"><div class="k">أكتر دكتور جلسات</div><div class="v" style="font-size:22px;direction:ltr;text-align:right">${esc(docs[0].name)}</div><div class="s">${docs[0].attended} جلسة · ${docs[0].days} يوم</div></div>
+      <div class="card kpi"><div class="k">أكتر دكتور ${M.many}</div><div class="v" style="font-size:22px;direction:ltr;text-align:right">${esc(docs[0].name)}</div><div class="s">${docs[0].attended} ${M.one} · ${docs[0].days} يوم</div></div>
     </div>
     <div class="card explain">
-      <b>إزاي تقرا الأرقام:</b> كل جلسة الدكتور علّمها <b style="color:var(--good)">أخضر</b> بتتحسب جلسة، ولو الجلسة أطول من ساعة وربع بتتحسب <b>جلستين</b>.
-      الـ<b style="color:var(--bad)">أحمر</b> بيتحسب غياب، والأبيض اللي محدش علّمه مش بيتحسب.
-      ${worstNs ? `أعلى نسبة غياب عند <b dir="ltr">${esc(worstNs.name)}</b> (${Math.round(worstNs.noShow / (worstNs.attended + worstNs.noShow) * 100)}%).` : ""}
-      أكبر قسم شغل: <b dir="ltr">${esc(secs[0][0])}</b> بـ ${secs[0][1]} جلسة.
+      <b>إزاي تقرا الأرقام:</b> ${state.metric === "cases"
+        ? `كل مريض الدكتور علّمه <b style="color:var(--good)">أخضر</b> بيتحسب <b>حالة واحدة</b> مهما كانت مدة الجلسة.`
+        : `كل جلسة الدكتور علّمها <b style="color:var(--good)">أخضر</b> بتتحسب جلسة، ولو الجلسة أطول من ساعة وربع بتتحسب <b>جلستين</b>.`}
+      الـ<b style="color:var(--bad)">أحمر</b> بيتحسب غياب، والأبيض اللي محدش علّمه مش بيتحسب. أي دكتور جديد يظهر في الشيت بيتضاف هنا لوحده.
+      ${worstNs ? `أعلى نسبة غياب عند <b dir="ltr">${esc(worstNs.name)}</b> (${Math.round(nsRate(worstNs) * 100)}%).` : ""}
+      أكبر قسم شغل: <b dir="ltr">${esc(secs[0][0])}</b> بـ ${secs[0][1]} ${M.one}.
     </div>
     <div class="charts">
-      <div class="card chart-card" style="grid-row:span 2"><h3>جلسات كل دكتور</h3><p>مترتبين من الأكتر للأقل</p><div class="chart-box tall" style="height:${Math.max(320, docs.length * 24 + 40)}px"><canvas id="cDoc"></canvas></div></div>
-      <div class="card chart-card"><h3>الجلسات كل يوم</h3><p>حضر وغاب في كل يوم</p><div class="chart-box"><canvas id="cDay"></canvas></div></div>
-      <div class="card chart-card"><h3>الجلسات حسب القسم</h3><p>OT / Inpatient / Aqua / Outpatient ...</p><div class="chart-box"><canvas id="cSec"></canvas></div></div>
+      <div class="card chart-card" style="grid-row:span 2"><h3>${M.many} كل دكتور</h3><p>مترتبين من الأكتر للأقل · الأحمر = عدد اللي محضروش</p><div class="chart-box tall" style="height:${Math.max(320, docs.length * 24 + 40)}px"><canvas id="cDoc"></canvas></div></div>
+      <div class="card chart-card"><h3>${M.many} كل يوم</h3><p>حضر وغاب في كل يوم</p><div class="chart-box"><canvas id="cDay"></canvas></div></div>
+      <div class="card chart-card"><h3>${M.many} حسب القسم</h3><p>OT / Inpatient / Aqua / Outpatient ...</p><div class="chart-box"><canvas id="cSec"></canvas></div></div>
     </div>`;
-  el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; renderAnalysis(); });
+  bind();
 
   if (!window.Chart) return;
   const C = window.Chart;
@@ -437,7 +489,7 @@ function renderAnalysis() {
   }));
   state.charts.push(new C($("#cSec"), {
     type: "bar",
-    data: { labels: secs.map(s => s[0]), datasets: [{ label: "جلسات", data: secs.map(s => s[1]), backgroundColor: blue, ...bar }] },
+    data: { labels: secs.map(s => s[0]), datasets: [{ label: METRICS[state.metric].many, data: secs.map(s => s[1]), backgroundColor: blue, ...bar }] },
     options: { ...base, plugins: { ...base.plugins, legend: { display: false } },
       scales: { x: { grid: { display: false } }, y: { grid: { color: grid }, ticks: { precision: 0 } } } },
   }));

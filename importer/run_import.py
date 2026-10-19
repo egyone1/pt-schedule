@@ -49,6 +49,7 @@ def summarize(day):
             "submitted": bool(d.get("submitted")),
             "booked": sum(s.get("units", 1) for s in ss),
             "attended": sum(s.get("units", 1) for s in ss if s.get("status") == 1),
+            "cases": sum(1 for s in ss if s.get("status") == 1),
             "noShow": sum(1 for s in ss if s.get("status") == 2),
             "unmarked": sum(1 for s in ss if not s.get("status")),
         }
