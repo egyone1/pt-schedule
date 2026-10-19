@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'admin@cleo-pt-schedule.app';
+    }
+    function isImporter() {
+      return request.auth != null && request.auth.token.email == 'importer@cleo-pt-schedule.app';
+    }
+
+    // one document per day, created by the 9 PM import
+    match /days/{date} {
+      allow read: if true;
+      allow create, delete: if isImporter() || isAdmin();
+      // doctors (no login) may mark sessions and submit while the day is open;
+      // after it closes only the admin can change anything
+      allow update: if isAdmin() || isImporter()
+        || (resource.data.status == 'open'
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['doctors', 'updatedAt', 'status', 'closedAt'])
+            && request.resource.data.status in ['open', 'closed']);
+    }
+
+    // per-day totals for the statistics / analysis tabs
+    match /stats/{date} {
+      allow read: if true;
+      allow write: if isAdmin() || isImporter()
+        || get(/databases/$(database)/documents/days/$(date)).data.status == 'open';
+    }
+  }
+}

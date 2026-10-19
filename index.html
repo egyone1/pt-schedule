@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>جدول العلاج الطبيعي</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23126e5a'/><path d='M9 17l5 5 9-11' stroke='white' stroke-width='3.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">✓</span>
+    <div>
+      <h1>جدول العلاج الطبيعي</h1>
+      <small id="demoTag" hidden>نسخة تجربة</small>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="today" class="active">اليوم</button>
+    <button role="tab" data-view="stats">الإحصائيات</button>
+    <button role="tab" data-view="analysis">Analysis</button>
+  </nav>
+  <button id="adminBtn" class="ghost">🔒 أدمن</button>
+</header>
+
+<main>
+  <section id="view-today" class="view"></section>
+  <section id="view-stats" class="view" hidden></section>
+  <section id="view-analysis" class="view" hidden></section>
+</main>
+
+<dialog id="modal">
+  <form method="dialog" id="modalForm">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="modal-actions">
+      <button value="cancel" class="ghost" id="modalCancel">إلغاء</button>
+      <button value="ok" class="primary" id="modalOk">تمام</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
