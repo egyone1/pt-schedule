@@ -1,11 +1,13 @@
 """Daily job (GitHub Actions).
 
-9 AM Cairo: close any older day still open (doctors who did not submit keep what they
-            marked), then build today's schedule from the booking workbook - all white.
-9 PM Cairo: read today's tab again; the latest version is the final schedule.
+9 AM Cairo:  build today's schedule from the booking workbook - all white.
+9 PM Cairo:  read today's tab again; the latest version is the final schedule.
+12 midnight: a day stays open through the next day ("yesterday") so doctors have a full
+             day to finish; when it stops being yesterday it is closed (doctors who did
+             not submit keep what they marked).
 
 Env: SHARE_URL, FIREBASE_API_KEY, FIREBASE_PROJECT, IMPORTER_EMAIL, IMPORTER_PASSWORD
-     MODE=open|final to run outside the time windows, DAY=YYYY-MM-DD for another day.
+     MODE=open|final|close to run outside the time windows, DAY=YYYY-MM-DD for another day.
 """
 import datetime as dt
 import http.cookiejar
@@ -99,11 +101,12 @@ def close_day(db, date, doc):
 
 
 def main():
-    """MODE=open (9 AM): close yesterday, create today's schedule.
+    """MODE=open (9 AM): create today's schedule.
        MODE=final (9 PM): re-read today's tab, it becomes the final schedule.
-       Without MODE the Cairo hour decides (9-10 -> open, 21-22 -> final)."""
+       MODE=close (midnight): close every day older than yesterday.
+       Without MODE the Cairo hour decides."""
     now = dt.datetime.now(CAIRO)
-    mode = os.environ.get("MODE") or {9: "open", 10: "open", 21: "final", 22: "final"}.get(now.hour)
+    mode = os.environ.get("MODE") or {0: "close", 1: "close", 9: "open", 10: "open", 21: "final", 22: "final"}.get(now.hour)
     if not mode:
         print("nothing to do at %s Cairo" % now.strftime("%H:%M"))
         return
@@ -113,10 +116,14 @@ def main():
     token = sign_in(os.environ["FIREBASE_API_KEY"], os.environ["IMPORTER_EMAIL"], os.environ["IMPORTER_PASSWORD"])
     db = Firestore(os.environ["FIREBASE_PROJECT"], token)
 
-    if mode == "open":
+    # anything older than yesterday is closed (also checked at 9 AM in case midnight was missed)
+    if mode in ("close", "open"):
+        keep_from = (now.date() - dt.timedelta(days=1)).isoformat()
         for d, doc in db.query_eq("days", "status", "open"):
-            if d < date:
+            if d < keep_from:
                 close_day(db, d, doc)
+        if mode == "close":
+            return
     live = db.get("days/" + date)
     if mode == "open" and live is not None:
         print("days/%s already exists - skipping" % date)

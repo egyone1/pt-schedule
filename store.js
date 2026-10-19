@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=6";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=7";
 
 export function summarize(day) {
   const out = {};

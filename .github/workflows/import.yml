@@ -1,6 +1,7 @@
 name: Nightly schedule import
 
-# 9 AM Cairo opens today's schedule, 9 PM Cairo re-reads it as the final version.
+# 9 AM Cairo opens today's schedule, 9 PM Cairo re-reads it as the final version,
+# just after midnight Cairo the day before yesterday is closed.
 # Cairo is UTC+3 in summer time and UTC+2 in winter, so each time has runs for both;
 # the script checks the Cairo hour and only acts inside 9-10 AM / 9-10 PM (and only once).
 on:
@@ -9,14 +10,15 @@ on:
     - cron: "30 6,7 * * *"
     - cron: "0 18,19 * * *"
     - cron: "40 19 * * *"
+    - cron: "5 21,22 * * *"
   workflow_dispatch:
     inputs:
       mode:
-        description: "open (create today's schedule) or final (re-read the sheet)"
+        description: "open (create today's schedule), final (re-read the sheet) or close (close old days)"
         required: true
         default: "open"
         type: choice
-        options: [open, final]
+        options: [open, final, close]
       day:
         description: "Day YYYY-MM-DD (empty = today)"
         required: false

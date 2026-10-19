@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=6";
-import { ADMIN_EMAIL } from "./config.js?v=6";
+import { createStore } from "./store.js?v=7";
+import { ADMIN_EMAIL } from "./config.js?v=7";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -215,7 +215,7 @@ function renderToday() {
     el.innerHTML = adminBar + dayTabs() + `<div class="empty"><div class="big">🗓️</div>
       <h2>${early ? "جدول النهارده هيظهر الساعة 9 الصبح" : "مفيش جدول لليوم ده"}</h2>
       <p>جدول اليوم بيظهر أوتوماتيك كل يوم الساعة <b>9 الصبح</b> من شيت السكرتارية، والـ Submit بيفتح الساعة <b>3 العصر</b>.<br>
-      الساعة <b>9 بالليل</b> الجدول بيتحدّث بآخر تعديل في الشيت ويبقى هو النهائي.</p></div>`;
+      الساعة <b>9 بالليل</b> الجدول بيتحدّث بآخر تعديل في الشيت ويبقى هو النهائي، وبيفضل مفتوح للدكاترة لحد <b>12 بالليل</b> اليوم اللي بعده.</p></div>`;
     bindAdminBar(); bindDayTabs(el);
     return;
   }
@@ -230,7 +230,7 @@ function renderToday() {
   const keep = { left: oldBoard?.scrollLeft, top: oldBoard?.scrollTop, y: window.scrollY };
 
   const statusLine = day.status === "open"
-    ? `مفتوح · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : "هيتحدّث بآخر تعديل الساعة 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
+    ? `مفتوح لحد 12 بالليل ${day.date === cairoNow().date ? "بكرة" : "النهارده"} · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : "هيتحدّث بآخر تعديل الساعة 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
     : `<b style="color:var(--brand)">مقفول ✓</b>${day.autoClosed ? " (اتقفل أوتوماتيك)" : ""}`;
 
   el.innerHTML = `${adminBar}
