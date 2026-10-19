@@ -181,11 +181,19 @@ def parse_day(path_or_wb, day):
     by_name = {}
     for d in doctors:
         by_name.setdefault(d["name"], []).append(d)
+    # No number to tell them apart (M.Gamal / M Gamal) but different sections in the sheet:
+    # add the section, e.g. "M Gamal (Inpatient)" and "M Gamal (Aqua)".
     for same in by_name.values():
+        if len(same) < 2:
+            continue
         if len({ext(d["order"]) for d in same}) > 1:
             for d in same:
                 if ext(d["order"]):
                     d["name"] = "%s %s" % (d["name"], ext(d["order"]))
+        elif not ext(same[0]["order"]) and len({d["section"] for d in same}) > 1:
+            for d in same:
+                if d["section"]:
+                    d["name"] = "%s (%s)" % (d["name"], d["section"])
     return {"date": day.isoformat(), "sheet": ws.title.strip(), "doctors": doctors}
 
 

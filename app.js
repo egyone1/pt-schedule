@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=5";
-import { ADMIN_EMAIL } from "./config.js?v=5";
+import { createStore } from "./store.js?v=6";
+import { ADMIN_EMAIL } from "./config.js?v=6";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -20,6 +20,7 @@ const state = {
   openDays: [], day: null, viewDate: null, unsubDay: null,
   stats: [], section: "all", me: ls.get("meKey", ""), meName: ls.get("me", ""),
   settings: { depts: {}, assign: {} }, dept: "all",
+  dayPick: "today", override: false,   // override = admin opened another date
   statsMonth: "", period: "month", charts: [], metric: ls.get("metric", "sessions"),
 };
 
@@ -82,11 +83,29 @@ function watchDay(date) {
   if (!date) { state.unsubDay = null; render(); return; }
   state.unsubDay = state.store.onDay(date, d => { state.day = d; if (state.view === "today") renderToday(); });
 }
+function addDays(iso, n) {
+  const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const pickedDate = () => state.dayPick === "yesterday" ? addDays(cairoNow().date, -1) : cairoNow().date;
+function followPick() {
+  if (!state.override && state.viewDate !== pickedDate()) watchDay(pickedDate());
+}
 function onOpenDays(days) {
   state.openDays = days;
-  const stillValid = state.viewDate && (days.some(d => d.date === state.viewDate) || state.admin);
-  if (!stillValid) watchDay(days[0]?.date || null);
+  if (!state.override && state.viewDate !== pickedDate()) watchDay(pickedDate());
   else if (state.view === "today") renderToday();
+}
+function dayTabs() {
+  const t = cairoNow().date, y = addDays(t, -1);
+  const tab = (k, label, d) => `<button class="${!state.override && state.dayPick === k ? "active" : ""}" data-pick="${k}">
+    <b>${label}</b><span>${arDate(d, { weekday: "long", day: "numeric", month: "short" })}</span></button>`;
+  return `<div class="daytabs">${tab("today", "النهارده", t)}${tab("yesterday", "امبارح", y)}</div>`;
+}
+function bindDayTabs(el) {
+  el.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => {
+    state.dayPick = b.dataset.pick; state.override = false; watchDay(pickedDate());
+  });
 }
 
 /* ---------------- departments (admin) ---------------- */
@@ -192,11 +211,12 @@ function renderToday() {
   const day = state.day;
   const adminBar = state.admin ? adminDayBar() : "";
   if (!day) {
-    el.innerHTML = adminBar + `<div class="empty"><div class="big">🗓️</div>
-      <h2>مفيش جدول مفتوح دلوقتي</h2>
+    const early = state.dayPick === "today" && !state.override && cairoNow().hour < 9;
+    el.innerHTML = adminBar + dayTabs() + `<div class="empty"><div class="big">🗓️</div>
+      <h2>${early ? "جدول النهارده هيظهر الساعة 9 الصبح" : "مفيش جدول لليوم ده"}</h2>
       <p>جدول اليوم بيظهر أوتوماتيك كل يوم الساعة <b>9 الصبح</b> من شيت السكرتارية، والـ Submit بيفتح الساعة <b>3 العصر</b>.<br>
       الساعة <b>9 بالليل</b> الجدول بيتحدّث بآخر تعديل في الشيت ويبقى هو النهائي.</p></div>`;
-    bindAdminBar();
+    bindAdminBar(); bindDayTabs(el);
     return;
   }
   const docs = doctorsOf(day);
@@ -216,7 +236,7 @@ function renderToday() {
   el.innerHTML = `${adminBar}
     ${day.status === "closed" && state.admin ? `<div class="banner">ده يوم مقفول — إنت بتعدّل كأدمن، والإحصائيات بتتحدّث لوحدها.</div>` : ""}
     <div class="toolbar">
-      <div class="day-title"><h2>${arDate(day.date)}</h2><div class="sub">${statusLine}</div></div>
+      <div class="day-title">${dayTabs()}<h2>${arDate(day.date)}</h2><div class="sub">${statusLine}</div></div>
       <div class="progress">
         <div class="lbl"><span>عملوا Submit</span><b>${submitted} / ${docs.length}</b></div>
         <div class="bar"><i style="width:${docs.length ? submitted / docs.length * 100 : 0}%"></i></div>
@@ -244,7 +264,7 @@ function renderToday() {
   if (board && keep.left != null) { board.scrollLeft = keep.left; board.scrollTop = keep.top; }
   if (keep.y) window.scrollTo(0, keep.y);
 
-  bindAdminBar();
+  bindAdminBar(); bindDayTabs(el);
   $("#meSel").onchange = e => {
     state.me = e.target.value;
     state.meName = docs.find(d => d.key === state.me)?.name || "";
@@ -358,7 +378,7 @@ function adminDayBar() {
 }
 function bindAdminBar() {
   if (!state.admin) return;
-  $("#adminDate")?.addEventListener("change", e => watchDay(e.target.value));
+  $("#adminDate")?.addEventListener("change", e => { state.override = true; watchDay(e.target.value); });
   $("#closeDay")?.addEventListener("click", async () => {
     if (await modal("قفل اليوم", "اللي متعلّمش هيفضل مش متحسوب. تقفل؟", { ok: "اقفل" })) {
       await state.store.setStatus(state.day.date, "closed"); toast("اليوم اتقفل ✓");
@@ -466,7 +486,7 @@ function renderStats() {
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = `sessions-${state.statsMonth}${state.dept === "all" ? "" : "-" + state.dept}.csv`; a.click();
   };
-  if (state.admin) el.querySelectorAll("th.day").forEach(th => th.onclick = () => { watchDay(th.dataset.date); setView("today"); });
+  if (state.admin) el.querySelectorAll("th.day").forEach(th => th.onclick = () => { state.override = true; watchDay(th.dataset.date); setView("today"); });
 }
 
 const inDept = name => state.dept === "all" || name === state.dept;
@@ -645,11 +665,12 @@ function renderAnalysis() {
     state.admin = isAdmin;
     $("#adminBtn").classList.toggle("on", isAdmin);
     $("#adminBtn").textContent = isAdmin ? "🔓 أدمن" : "🔒 أدمن";
-    if (!isAdmin && state.viewDate && !state.openDays.some(d => d.date === state.viewDate)) watchDay(state.openDays[0]?.date || null);
+    if (!isAdmin) { state.override = false; followPick(); }
     render();
   });
   state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, ...s }; render(); });
   state.store.onOpenDays(onOpenDays);
+  setInterval(followPick, 60000);          // midnight / 9 AM roll-over while the page stays open
   state.store.onStats(s => { state.stats = s; if (state.view !== "today") render(); else if (state.admin) renderToday(); });
   render();
 })();
