@@ -1,0 +1,47 @@
+name: Nightly schedule import
+
+# 9 PM Cairo = 18:00 UTC in summer time, 19:00 UTC in winter time.
+# Several runs are scheduled; the script only imports once per day (inside the 21:00-22:59 window).
+on:
+  schedule:
+    - cron: "0 18 * * *"
+    - cron: "30 18 * * *"
+    - cron: "0 19 * * *"
+    - cron: "30 19 * * *"
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "Day to import YYYY-MM-DD (empty = today)"
+        required: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install openpyxl==3.1.5
+      - name: Import today's schedule
+        working-directory: importer
+        run: python run_import.py
+        env:
+          SHARE_URL: ${{ secrets.SHARE_URL }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT: ${{ secrets.FIREBASE_PROJECT }}
+          IMPORTER_EMAIL: ${{ secrets.IMPORTER_EMAIL }}
+          IMPORTER_PASSWORD: ${{ secrets.IMPORTER_PASSWORD }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          DAY: ${{ inputs.day }}
+      # GitHub pauses scheduled workflows after 60 days without commits - keep this one on.
+      - name: Keep the schedule enabled
+        if: always()
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/import.yml/enable" || true
+        env:
+          GH_TOKEN: ${{ github.token }}
