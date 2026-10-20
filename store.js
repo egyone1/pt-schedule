@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=8";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=9";
 
 export function summarize(day) {
   const out = {};
@@ -53,6 +53,9 @@ async function firebaseStore() {
       return fs.onSnapshot(fs.doc(db, "settings", "departments"), s => cb(s.exists() ? s.data() : {}));
     },
     saveSettings: data => fs.setDoc(fs.doc(db, "settings", "departments"), data),
+    // sheet link + last import result (admin only - the sheet has patient phone numbers)
+    getSource: async () => { const x = await fs.getDoc(fs.doc(db, "private", "source")); return x.exists() ? x.data() : {}; },
+    saveSource: url => fs.setDoc(fs.doc(db, "private", "source"), { shareUrl: url, changedAt: nowIso() }, { merge: true }),
     async setSessions(date, key, sessions, dayClosed) {
       await fs.updateDoc(dayRef(date), { [`doctors.${key}.sessions`]: sessions, updatedAt: nowIso() });
       if (dayClosed) await this._restat(date);         // totals only change once the day is closed
@@ -127,6 +130,8 @@ async function demoStore() {
     onStats: cb => sub(() => cb(Object.values(data.stats).map(clone))),
     onSettings: cb => sub(() => cb(clone(data.settings || {}))),
     async saveSettings(s) { data.settings = s; save(); },
+    getSource: async () => ({ ...(data.source || {}) }),
+    async saveSource(url) { data.source = { ...(data.source || {}), shareUrl: url, changedAt: nowIso() }; save(); },
     async setSessions(date, key, sessions) {
       const day = data.days[date];
       day.doctors[key].sessions = sessions;

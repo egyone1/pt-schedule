@@ -7,6 +7,9 @@
              day to finish; when it stops being yesterday it is closed (doctors who did
              not submit keep what they marked).
 
+The sheet link comes from private/source.shareUrl (the admin can change it on the site);
+SHARE_URL is only the fallback. Each run records success/failure there for the admin.
+
 Env: SHARE_URL, FIREBASE_API_KEY, FIREBASE_PROJECT, IMPORTER_EMAIL, IMPORTER_PASSWORD
      MODE=open|refresh|final|close to run outside the time windows, DAY=YYYY-MM-DD for another day.
 """
@@ -106,6 +109,15 @@ def merge_final(live, parsed):
     return doctors, changed
 
 
+def _safe(fn):
+    """The link/status record is a convenience - never let it stop an import."""
+    try:
+        return fn()
+    except Exception as e:
+        print("note: private/source not available (%s)" % str(e)[:120])
+        return None
+
+
 def close_day(db, date, doc):
     db.set("stats/" + date, {"date": date, "doctors": summarize(doc), "autoClosed": True})
     db.update("days/" + date, {"status": "closed", "autoClosed": True,
@@ -149,7 +161,14 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "book.xlsx")
-        download_workbook(os.environ["SHARE_URL"], path)
+        src = _safe(lambda: db.get("private/source")) or {}
+        url = src.get("shareUrl") or os.environ.get("SHARE_URL")
+        try:
+            download_workbook(url, path)
+        except Exception as e:
+            _safe(lambda: db.update("private/source", {"lastError": str(e)[:300], "lastErrorAt": dt.datetime.now(CAIRO).isoformat()}))
+            raise
+        _safe(lambda: db.update("private/source", {"lastOkAt": dt.datetime.now(CAIRO).isoformat(), "lastError": ""}))
         parsed = parse_day(path, day)
     if not parsed or not parsed["doctors"]:
         print("no tab for %s in the workbook - nothing imported" % day)

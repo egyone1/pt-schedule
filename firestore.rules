@@ -27,6 +27,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // sheet link + last import result: admin and the importer only (the sheet has patient data)
+    match /private/{doc} {
+      allow read, write: if isAdmin() || isImporter();
+    }
+
     // per-day totals for the statistics / analysis tabs
     match /stats/{date} {
       allow read: if true;

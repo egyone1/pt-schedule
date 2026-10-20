@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=8";
-import { ADMIN_EMAIL } from "./config.js?v=8";
+import { createStore } from "./store.js?v=9";
+import { ADMIN_EMAIL } from "./config.js?v=9";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -162,6 +162,30 @@ async function manageDepts() {
   });
   await saveSettings({ depts, assign });
   toast("الأقسام اتحفظت ✓");
+}
+
+/* ---------------- sheet link (admin) ---------------- */
+const fmtStamp = iso => iso ? new Date(iso).toLocaleString("ar-EG-u-nu-latn", { timeZone: "Africa/Cairo", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "—";
+async function editSource() {
+  let src = {};
+  try { src = await state.store.getSource(); } catch (e) { console.error(e); }
+  const failing = src.lastError && (!src.lastOkAt || src.lastErrorAt > src.lastOkAt);
+  const d = await modal("لينك شيت السكرتارية",
+    `<p>لو السكرتارية غيّروا الملف أو اللينك، الزق اللينك الجديد هنا. الموقع هيكمّل منه من التحديث الجاي (9 الصبح · 3 العصر · 9 بالليل).</p>
+     <p style="font-size:13px">اللينك لازم يكون <b>Anyone with the link can view</b>، والشيت بنفس الشكل: تاب لكل يوم واسمه فيه رقم اليوم والشهر.</p>
+     <label style="font-size:13px">اللينك:</label>
+     <input id="srcUrl" dir="ltr" value="${esc(src.shareUrl || "")}" placeholder="https://....sharepoint.com/:x:/...">
+     <p style="font-size:12.5px;margin-top:10px">آخر سحب ناجح: <b>${fmtStamp(src.lastOkAt)}</b>
+     ${failing ? `<br><span style="color:var(--bad)">⚠ آخر محاولة فشلت (${fmtStamp(src.lastErrorAt)}): ممكن اللينك اتقفل أو اتغير.</span>` : ""}</p>`,
+    { ok: "احفظ اللينك" });
+  if (!d) return;
+  const url = d.querySelector("#srcUrl").value.trim();
+  if (url === (src.shareUrl || "")) return;
+  if (!/^https:\/\/[^\s]+\.(sharepoint\.com|onedrive\.live\.com|1drv\.ms)\//i.test(url)) {
+    toast("ده مش لينك SharePoint / OneDrive — متحفظش"); return;
+  }
+  try { await state.store.saveSource(url); toast("اللينك الجديد اتحفظ ✓ — هيتسحب منه في التحديث الجاي"); }
+  catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
 
 /* ---------------- TODAY ---------------- */
@@ -377,6 +401,7 @@ function adminDayBar() {
       ? `<button class="ghost" id="closeDay">اقفل اليوم واحفظ الأرقام</button>`
       : `<button class="ghost" id="reopenDay">افتح اليوم تاني للدكاترة</button>`) : ""}
     <button class="ghost" id="deptsBtn">🎨 الأقسام</button>
+    <button class="ghost" id="srcBtn">🔗 لينك الشيت</button>
     ${state.store.demo ? `<button class="ghost" id="resetDemo">رجّع التجربة من الأول</button>` : ""}
   </div>`;
 }
@@ -393,6 +418,7 @@ function bindAdminBar() {
   });
   $("#resetDemo")?.addEventListener("click", () => state.store.resetDemo());
   $("#deptsBtn")?.addEventListener("click", manageDepts);
+  $("#srcBtn")?.addEventListener("click", editSource);
 }
 
 /* ---------------- aggregation ---------------- */
