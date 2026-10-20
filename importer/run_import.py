@@ -1,13 +1,14 @@
 """Daily job (GitHub Actions).
 
 9 AM Cairo:  build today's schedule from the booking workbook - all white.
+~2:45 PM:    read today's tab again so the schedule is current when Submit opens at 3 PM.
 9 PM Cairo:  read today's tab again; the latest version is the final schedule.
 12 midnight: a day stays open through the next day ("yesterday") so doctors have a full
              day to finish; when it stops being yesterday it is closed (doctors who did
              not submit keep what they marked).
 
 Env: SHARE_URL, FIREBASE_API_KEY, FIREBASE_PROJECT, IMPORTER_EMAIL, IMPORTER_PASSWORD
-     MODE=open|final|close to run outside the time windows, DAY=YYYY-MM-DD for another day.
+     MODE=open|refresh|final|close to run outside the time windows, DAY=YYYY-MM-DD for another day.
 """
 import datetime as dt
 import http.cookiejar
@@ -62,22 +63,33 @@ def _sig(sess):
     return (sess["start"], sess["end"], re.sub(r"\s+", " ", sess["patient"]).strip())
 
 
+def _who(sess):
+    return (sess["start"], re.sub(r"\s+", " ", sess["patient"]).strip())
+
+
 def merge_final(live, parsed):
-    """9 PM: the sheet's latest version becomes the final schedule.
+    """3 PM / 9 PM: bring the day up to date with the sheet (9 PM = final).
 
     Marks are kept for every session that is still there (same time + patient).
     A doctor whose list of sessions did not change keeps their Submit; a doctor
     whose schedule changed is un-submitted (with a note) so they review it again.
     Returns (new doctors map, names of doctors whose schedule changed).
     """
-    old_by_name = {d["name"]: d for d in (live.get("doctors") or {}).values()}
+    old_all = live.get("doctors") or {}
+    # same column first; else same name + section (one doctor can have two columns, e.g.
+    # Monica in Aqua and Lym); else the name alone when it is unique (column moved)
+    by_ns = {(d["name"], d.get("section")): d for d in old_all.values()}
+    names = [d["name"] for d in old_all.values()]
+    by_name = {d["name"]: d for d in old_all.values() if names.count(d["name"]) == 1}
     doctors, changed = {}, []
     for d in parsed["doctors"]:
-        old = old_by_name.get(d["name"])
+        old = old_all.get(d["key"])
+        if old is None or old["name"] != d["name"]:
+            old = by_ns.get((d["name"], d.get("section"))) or by_name.get(d["name"])
         if old:
-            marks = {_sig(x): x.get("status", 0) for x in old.get("sessions", [])}
+            marks = {_who(x): x.get("status", 0) for x in old.get("sessions", [])}
             for x in d["sessions"]:
-                x["status"] = marks.get(_sig(x), 0)
+                x["status"] = marks.get(_who(x), 0)
             same = sorted(map(_sig, old.get("sessions", []))) == sorted(map(_sig, d["sessions"]))
             if same:
                 for k in ("submitted", "submittedAt"):
@@ -85,8 +97,9 @@ def merge_final(live, parsed):
                         d[k] = old[k]
             else:
                 changed.append(d["name"])
-                d["changedAt"] = dt.datetime.now(CAIRO).isoformat()
                 d["submitted"] = False
+                if old.get("submitted"):                 # only they need to look again
+                    d["changedAt"] = dt.datetime.now(CAIRO).isoformat()
         else:
             changed.append(d["name"])
         doctors[d["key"]] = d
@@ -106,7 +119,8 @@ def main():
        MODE=close (midnight): close every day older than yesterday.
        Without MODE the Cairo hour decides."""
     now = dt.datetime.now(CAIRO)
-    mode = os.environ.get("MODE") or {0: "close", 1: "close", 9: "open", 10: "open", 21: "final", 22: "final"}.get(now.hour)
+    mode = os.environ.get("MODE") or {0: "close", 1: "close", 9: "open", 10: "open",
+                                      14: "refresh", 15: "refresh", 21: "final", 22: "final"}.get(now.hour)
     if not mode:
         print("nothing to do at %s Cairo" % now.strftime("%H:%M"))
         return
@@ -128,8 +142,9 @@ def main():
     if mode == "open" and live is not None:
         print("days/%s already exists - skipping" % date)
         return
-    if mode == "final" and live and live.get("finalAt") and not os.environ.get("MODE"):
-        print("final schedule for %s already taken at %s - skipping" % (date, live["finalAt"]))
+    done_key = {"refresh": "refreshedAt", "final": "finalAt"}.get(mode)
+    if done_key and live and live.get(done_key) and not os.environ.get("MODE"):
+        print("%s for %s already done at %s - skipping" % (mode, date, live[done_key]))
         return
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -140,6 +155,10 @@ def main():
         print("no tab for %s in the workbook - nothing imported" % day)
         return
 
+    if mode != "open":
+        # re-read right before writing: the download + parse above takes over a minute and
+        # doctors keep tapping meanwhile - their marks must not be overwritten
+        live = db.get("days/" + date)
     stamp = dt.datetime.now(CAIRO).isoformat()
     if mode == "open" or live is None:
         parsed.update({"status": "open", "importedAt": stamp})
@@ -150,7 +169,7 @@ def main():
         return
 
     doctors, changed = merge_final(live, parsed)
-    live.update({"doctors": doctors, "finalAt": stamp, "sheet": parsed["sheet"]})
+    live.update({"doctors": doctors, done_key: stamp, "sheet": parsed["sheet"]})
     if changed and live.get("status") == "closed":
         live["status"] = "open"                      # someone has to re-check a changed schedule
     elif live.get("status") == "open" and all(d.get("submitted") for d in doctors.values()):
@@ -158,7 +177,7 @@ def main():
     db.set("days/" + date, live)
     if live["status"] == "closed":
         db.set("stats/" + date, {"date": date, "doctors": summarize(live)})
-    print("final schedule for %s: %d doctors, changed: %s" % (date, len(doctors), ", ".join(changed) or "none"))
+    print("%s for %s: %d doctors, changed: %s" % (mode, date, len(doctors), ", ".join(changed) or "none"))
 
 
 if __name__ == "__main__":

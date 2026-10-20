@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=7";
-import { ADMIN_EMAIL } from "./config.js?v=7";
+import { createStore } from "./store.js?v=8";
+import { ADMIN_EMAIL } from "./config.js?v=8";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -88,8 +88,12 @@ function addDays(iso, n) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 const pickedDate = () => state.dayPick === "yesterday" ? addDays(cairoNow().date, -1) : cairoNow().date;
+let lastLock = null;
 function followPick() {
-  if (!state.override && state.viewDate !== pickedDate()) watchDay(pickedDate());
+  if (!state.override && state.viewDate !== pickedDate()) { watchDay(pickedDate()); return; }
+  const lock = submitLocked();
+  if (lastLock !== null && lock !== lastLock && state.view === "today") renderToday();
+  lastLock = lock;
 }
 function onOpenDays(days) {
   state.openDays = days;
@@ -194,7 +198,7 @@ function cairoNow() {
 const SUBMIT_FROM = 15;   // doctors can submit from 3 PM on the day itself
 const submitLocked = () => !state.admin && state.day && state.day.date === cairoNow().date && cairoNow().hour < SUBMIT_FROM;
 const changedNote = d => d.changedAt && !d.submitted
-  ? `<div class="changed">⚠ الجدول اتغيّر الساعة 9 — راجعه واعمل Submit تاني</div>` : "";
+  ? `<div class="changed">⚠ جدولك اتغيّر في الشيت بعد الـ Submit — راجعه واعمل Submit تاني</div>` : "";
 
 function submitBtn(doc) {
   if (doc.submitted)
@@ -211,11 +215,11 @@ function renderToday() {
   const day = state.day;
   const adminBar = state.admin ? adminDayBar() : "";
   if (!day) {
-    const early = state.dayPick === "today" && !state.override && cairoNow().hour < 9;
+    const early = state.dayPick === "today" && !state.override && cairoNow().hour < 11;   // the 9 AM job can run ~20 min late
     el.innerHTML = adminBar + dayTabs() + `<div class="empty"><div class="big">🗓️</div>
-      <h2>${early ? "جدول النهارده هيظهر الساعة 9 الصبح" : "مفيش جدول لليوم ده"}</h2>
+      <h2>${early ? "جدول النهارده بيظهر الساعة 9 الصبح (ممكن يتأخر ربع ساعة)" : "مفيش جدول لليوم ده"}</h2>
       <p>جدول اليوم بيظهر أوتوماتيك كل يوم الساعة <b>9 الصبح</b> من شيت السكرتارية، والـ Submit بيفتح الساعة <b>3 العصر</b>.<br>
-      الساعة <b>9 بالليل</b> الجدول بيتحدّث بآخر تعديل في الشيت ويبقى هو النهائي، وبيفضل مفتوح للدكاترة لحد <b>12 بالليل</b> اليوم اللي بعده.</p></div>`;
+      الساعة <b>3 العصر</b> و<b>9 بالليل</b> الجدول بيتحدّث بآخر تعديل في الشيت ويبقى هو النهائي، وبيفضل مفتوح للدكاترة لحد <b>12 بالليل</b> اليوم اللي بعده.</p></div>`;
     bindAdminBar(); bindDayTabs(el);
     return;
   }
@@ -230,7 +234,7 @@ function renderToday() {
   const keep = { left: oldBoard?.scrollLeft, top: oldBoard?.scrollTop, y: window.scrollY };
 
   const statusLine = day.status === "open"
-    ? `مفتوح لحد 12 بالليل ${day.date === cairoNow().date ? "بكرة" : "النهارده"} · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : "هيتحدّث بآخر تعديل الساعة 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
+    ? `مفتوح لحد 12 بالليل ${day.date === cairoNow().date ? "بكرة" : "النهارده"} · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : day.refreshedAt ? "اتحدّث من الشيت الساعة 3 · التحديث النهائي 9 بالليل" : "بيتحدّث من الشيت الساعة 3 و 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
     : `<b style="color:var(--brand)">مقفول ✓</b>${day.autoClosed ? " (اتقفل أوتوماتيك)" : ""}`;
 
   el.innerHTML = `${adminBar}
@@ -670,7 +674,7 @@ function renderAnalysis() {
   });
   state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, ...s }; render(); });
   state.store.onOpenDays(onOpenDays);
-  setInterval(followPick, 60000);          // midnight / 9 AM roll-over while the page stays open
+  setInterval(followPick, 30000);          // midnight / 9 AM roll-over while the page stays open
   state.store.onStats(s => { state.stats = s; if (state.view !== "today") render(); else if (state.admin) renderToday(); });
   render();
 })();

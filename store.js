@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=7";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=8";
 
 export function summarize(day) {
   const out = {};
@@ -64,6 +64,7 @@ async function firebaseStore() {
         const day = snap.data();
         day.doctors[key].submitted = value;
         const patch = { [`doctors.${key}.submitted`]: value, [`doctors.${key}.submittedAt`]: value ? nowIso() : null };
+        if (value) patch[`doctors.${key}.changedAt`] = null;      // re-submitted -> warning done
         let closed = false;
         if (value && day.status === "open" && allSubmitted(day)) {
           patch.status = "closed"; patch.closedAt = nowIso(); closed = true;
