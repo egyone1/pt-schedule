@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=10";
-import { ADMIN_EMAIL } from "./config.js?v=10";
+import { createStore } from "./store.js?v=11";
+import { ADMIN_EMAIL } from "./config.js?v=11";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -209,7 +209,7 @@ function sessHTML(doc, s, top, height) {
   const two = s.units > 1 ? `<span class="x2" title="أكتر من ساعة وربع = جلستين">×2</span>` : "";
   return `<button class="sess s${s.status || 0}${locked}" data-key="${esc(doc.key)}" data-id="${esc(s.id)}" ${style}
     title="${esc(s.patient)} — ${esc(s.details)}">
-    ${two}<span class="p">${esc(s.patient)}</span>
+    <span class="mark" aria-hidden="true"></span>${two}<span class="p">${esc(s.patient)}</span>
     <span class="t">${fmtTime(toMin(s.start))} – ${fmtTime(toMin(s.end))}</span>
     ${s.details ? `<span class="d">${esc(s.details)}</span>` : ""}</button>`;
 }
@@ -655,7 +655,7 @@ function renderAnalysis() {
 
   if (!window.Chart) return;
   const C = window.Chart;
-  const ink = cssVar("--text-2"), grid = cssVar("--line"), good = "#0ca30c", bad = "#d03b3b", blue = cssVar("--series-1");
+  const ink = cssVar("--text-2"), grid = cssVar("--line"), good = cssVar("--good"), bad = cssVar("--bad"), blue = cssVar("--series-1");
   C.defaults.font.family = "Cairo, system-ui, sans-serif";
   C.defaults.color = ink;
   const base = {
@@ -699,6 +699,8 @@ function renderAnalysis() {
     render();
   });
   state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, ...s }; render(); });
+  const askedDay = new URLSearchParams(location.search).get("day");   // ?day=YYYY-MM-DD opens that day
+  if (/^\d{4}-\d{2}-\d{2}$/.test(askedDay || "")) { state.override = true; watchDay(askedDay); }
   state.store.onOpenDays(onOpenDays);
   setInterval(followPick, 30000);          // midnight / 9 AM roll-over while the page stays open
   state.store.onStats(s => { state.stats = s; if (state.view !== "today") render(); else if (state.admin) renderToday(); });
