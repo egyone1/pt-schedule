@@ -157,13 +157,15 @@ def close_day(db, date, doc):
 
 
 def main():
-    """MODE=open (9 AM): create today's schedule.
-       MODE=final (9 PM): re-read today's tab, it becomes the final schedule.
-       MODE=close (midnight): close every day older than yesterday.
-       Without MODE the Cairo hour decides."""
+    """Runs every hour; the Cairo hour decides what to do (or MODE=open|refresh|final|close):
+       9 AM-8 PM: create today's schedule if it isn't there yet, else bring it up to date
+                  with the sheet (once per hour) - a failed hour is simply redone next hour.
+       9 PM:      last read of the sheet, the final schedule.
+       midnight:  close every day older than yesterday."""
     now = dt.datetime.now(CAIRO)
-    mode = os.environ.get("MODE") or {0: "close", 1: "close", 9: "open", 10: "open", 11: "open", 12: "open",
-                                      14: "refresh", 15: "refresh", 21: "final", 22: "final"}.get(now.hour)
+    mode = os.environ.get("MODE")
+    if not mode:
+        mode = "close" if now.hour in (0, 1) else "hourly" if 9 <= now.hour <= 20 else "final" if now.hour in (21, 22) else None
     if not mode:
         print("nothing to do at %s Cairo" % now.strftime("%H:%M"))
         return
@@ -174,7 +176,7 @@ def main():
     db = Firestore(os.environ["FIREBASE_PROJECT"], token)
 
     # anything older than yesterday is closed (also checked at 9 AM in case midnight was missed)
-    if mode in ("close", "open"):
+    if mode in ("close", "open", "hourly"):
         keep_from = (now.date() - dt.timedelta(days=1)).isoformat()
         for d, doc in db.query_eq("days", "status", "open"):
             if d < keep_from:
@@ -182,13 +184,18 @@ def main():
         if mode == "close":
             return
     live = db.get("days/" + date)
+    if mode == "hourly":
+        mode = "open" if live is None else "refresh"
     if mode == "open" and live is not None:
         print("days/%s already exists - skipping" % date)
         return
     done_key = {"refresh": "refreshedAt", "final": "finalAt"}.get(mode)
     if done_key and live and live.get(done_key) and not os.environ.get("MODE"):
-        print("%s for %s already done at %s - skipping" % (mode, date, live[done_key]))
-        return
+        # final: once a day; refresh: once an hour (GitHub may start two runs in one hour)
+        same = live[done_key][:13] == now.isoformat()[:13] if mode == "refresh" else True
+        if same:
+            print("%s for %s already done at %s - skipping" % (mode, date, live[done_key]))
+            return
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "book.xlsx")

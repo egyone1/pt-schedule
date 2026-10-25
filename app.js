@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=9";
-import { ADMIN_EMAIL } from "./config.js?v=9";
+import { createStore } from "./store.js?v=10";
+import { ADMIN_EMAIL } from "./config.js?v=10";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -243,7 +243,7 @@ function renderToday() {
     el.innerHTML = adminBar + dayTabs() + `<div class="empty"><div class="big">🗓️</div>
       <h2>${early ? "جدول النهارده بيظهر الساعة 9 الصبح (ممكن يتأخر ربع ساعة)" : "مفيش جدول لليوم ده"}</h2>
       <p>جدول اليوم بيظهر أوتوماتيك كل يوم الساعة <b>9 الصبح</b> من شيت السكرتارية، والـ Submit بيفتح الساعة <b>3 العصر</b>.<br>
-      الساعة <b>3 العصر</b> و<b>9 بالليل</b> الجدول بيتحدّث بآخر تعديل في الشيت ويبقى هو النهائي، وبيفضل مفتوح للدكاترة لحد <b>12 بالليل</b> اليوم اللي بعده.</p></div>`;
+      الجدول بيتحدّث من الشيت <b>كل ساعة</b>، وتحديث الساعة <b>9 بالليل</b> هو النهائي، وبيفضل مفتوح للدكاترة لحد <b>12 بالليل</b> اليوم اللي بعده.</p></div>`;
     bindAdminBar(); bindDayTabs(el);
     return;
   }
@@ -258,7 +258,7 @@ function renderToday() {
   const keep = { left: oldBoard?.scrollLeft, top: oldBoard?.scrollTop, y: window.scrollY };
 
   const statusLine = day.status === "open"
-    ? `مفتوح لحد 12 بالليل ${day.date === cairoNow().date ? "بكرة" : "النهارده"} · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : day.refreshedAt ? "اتحدّث من الشيت الساعة 3 · التحديث النهائي 9 بالليل" : "بيتحدّث من الشيت الساعة 3 و 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
+    ? `مفتوح لحد 12 بالليل ${day.date === cairoNow().date ? "بكرة" : "النهارده"} · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : day.refreshedAt ? `آخر تحديث من الشيت ${new Date(day.refreshedAt).toLocaleTimeString("ar-EG-u-nu-latn", { timeZone: "Africa/Cairo", hour: "numeric", minute: "2-digit" })} · بيتحدّث كل ساعة لحد 9 بالليل` : "بيتحدّث من الشيت كل ساعة لحد 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
     : `<b style="color:var(--brand)">مقفول ✓</b>${day.autoClosed ? " (اتقفل أوتوماتيك)" : ""}`;
 
   el.innerHTML = `${adminBar}

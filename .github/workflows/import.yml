@@ -1,19 +1,13 @@
 name: Nightly schedule import
 
-# 9 AM Cairo opens today's schedule, ~2:45 PM refreshes it before Submit opens at 3 PM,
-# 9 PM Cairo re-reads it as the final version,
-# just after midnight Cairo the day before yesterday is closed.
-# Cairo is UTC+3 in summer time and UTC+2 in winter, so each time has runs for both;
-# the script checks the Cairo hour and acts only once per step (9 AM-12 PM retries if SharePoint fails).
+# Every hour from 9 AM to 8 PM Cairo the schedule is created (first run) or brought up to date
+# with the sheet; 9 PM is the last read (final schedule); just after midnight old days close.
+# Cron is in UTC: Cairo is UTC+3 in summer time and UTC+2 in winter, so the hourly range covers
+# both, and the script checks the Cairo hour and does each step only once.
 on:
   schedule:
-    - cron: "0 6,7 * * *"
-    - cron: "30 6,7 * * *"
-    - cron: "15 8,9 * * *"
-    - cron: "40 11,12 * * *"
-    - cron: "10 12,13 * * *"
-    - cron: "0 18,19 * * *"
-    - cron: "40 19 * * *"
+    - cron: "5 6-19 * * *"
+    - cron: "35 18,19 * * *"
     - cron: "5 21,22 * * *"
   workflow_dispatch:
     inputs:
