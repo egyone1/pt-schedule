@@ -19,6 +19,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import urllib.request
 from zoneinfo import ZoneInfo
 
@@ -29,20 +30,50 @@ CAIRO = ZoneInfo("Africa/Cairo")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36"
 
 
-def download_workbook(share_url, dest):
+def _try_download(share_url):
+    """One attempt, three ways (SharePoint sometimes leaves the download link out of the page)."""
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     opener.addheaders = [("User-Agent", UA)]
-    page = opener.open(share_url, timeout=120).read().decode("utf-8", "replace")
+    token = share_url.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+    tried = []
+    resp = opener.open(share_url, timeout=120)
+    final, page = resp.geturl(), resp.read().decode("utf-8", "replace")
+    urls = []
     m = re.search(r'"FileGetUrl":"([^"]+)"', page)
-    if not m:
-        raise RuntimeError("download link not found - is the share link still open to anyone?")
-    url = m.group(1).replace("\\u0026", "&")
-    data = opener.open(url, timeout=300).read()
-    if data[:2] != b"PK":
-        raise RuntimeError("download did not return an xlsx file")
-    with open(dest, "wb") as f:
-        f.write(data)
+    if m:
+        urls.append(m.group(1).replace(r"\u0026", "&"))
+    site = re.match(r"(https://[^/]+/personal/[^/]+)/", final)
+    if site:
+        g = re.search(r"sourcedoc=(?:%7B|\{)([0-9a-fA-F-]{36})", final)
+        if g:
+            urls.append("%s/_layouts/15/download.aspx?UniqueId=%s" % (site.group(1), g.group(1)))
+        urls.append("%s/_layouts/15/download.aspx?share=%s" % (site.group(1), token))
+    for url in urls:
+        try:
+            data = opener.open(url, timeout=300).read()
+            if data[:2] == b"PK":
+                return data
+            tried.append("not xlsx")
+        except Exception as e:
+            tried.append(str(e)[:80])
+    title = re.search(r"<title>([^<]*)", page)
+    raise RuntimeError("could not download the sheet (page: %s, landed on %s, tried: %s)"
+                       % (title.group(1).strip() if title else "?", final[:90], "; ".join(tried) or "no link found"))
+
+
+def download_workbook(share_url, dest, attempts=3, wait=60):
+    for i in range(attempts):
+        try:
+            data = _try_download(share_url)
+            with open(dest, "wb") as f:
+                f.write(data)
+            return
+        except Exception as e:
+            print("download attempt %d failed: %s" % (i + 1, e))
+            if i == attempts - 1:
+                raise
+            time.sleep(wait * (i + 1))
 
 
 def summarize(day):
@@ -131,7 +162,7 @@ def main():
        MODE=close (midnight): close every day older than yesterday.
        Without MODE the Cairo hour decides."""
     now = dt.datetime.now(CAIRO)
-    mode = os.environ.get("MODE") or {0: "close", 1: "close", 9: "open", 10: "open",
+    mode = os.environ.get("MODE") or {0: "close", 1: "close", 9: "open", 10: "open", 11: "open", 12: "open",
                                       14: "refresh", 15: "refresh", 21: "final", 22: "final"}.get(now.hour)
     if not mode:
         print("nothing to do at %s Cairo" % now.strftime("%H:%M"))
