@@ -6,7 +6,7 @@
 <title>جدول العلاج الطبيعي</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=11">
+<link rel="stylesheet" href="styles.css?v=12">
 <link rel="icon" type="image/png" href="favicon-32.png">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
@@ -26,8 +26,8 @@
   </div>
   <nav class="tabs" role="tablist">
     <button role="tab" data-view="today" class="active">اليوم</button>
-    <button role="tab" data-view="stats">الإحصائيات</button>
-    <button role="tab" data-view="analysis">Analysis</button>
+    <button role="tab" data-view="stats" hidden>الإحصائيات</button>
+    <button role="tab" data-view="analysis" hidden>المقارنة</button>
   </nav>
   <button id="adminBtn" class="ghost">🔒 أدمن</button>
 </header>
@@ -51,7 +51,7 @@
 <div id="toast" role="status"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=12"></script>
 <script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(console.warn));</script>
 </body>
 </html>

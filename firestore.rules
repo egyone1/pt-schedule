@@ -34,7 +34,7 @@ service cloud.firestore {
 
     // per-day totals for the statistics / analysis tabs
     match /stats/{date} {
-      allow read: if true;
+      allow read: if isAdmin();                  // statistics are for the admin only
       allow write: if isAdmin() || isImporter()
         || get(/databases/$(database)/documents/days/$(date)).data.status == 'open';
     }

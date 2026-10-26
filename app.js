@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=11";
-import { ADMIN_EMAIL } from "./config.js?v=11";
+import { createStore } from "./store.js?v=12";
+import { ADMIN_EMAIL } from "./config.js?v=12";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -21,7 +21,9 @@ const state = {
   stats: [], section: "all", me: ls.get("meKey", ""), meName: ls.get("me", ""),
   settings: { depts: {}, assign: {} }, dept: "all",
   dayPick: "today", override: false,   // override = admin opened another date
-  statsMonth: "", period: "month", charts: [], metric: ls.get("metric", "sessions"),
+  charts: [], metric: ls.get("metric", "sessions"), unsubStats: null,
+  rep: { preset: "month", from: "", to: "", dept: "all", sort: "sessions", dir: -1 },   // reports filters
+  cmpA: { preset: "month", from: "", to: "" }, cmpB: { preset: "last", from: "", to: "" },
 };
 
 /* ---------------- ui helpers ---------------- */
@@ -421,129 +423,239 @@ function bindAdminBar() {
   $("#srcBtn")?.addEventListener("click", editSource);
 }
 
-/* ---------------- aggregation ---------------- */
-function rowsFrom(statsDocs) {
-  // one row per doctor per day
-  const rows = [];
-  for (const s of statsDocs)
-    for (const d of Object.values(s.doctors || {}))
-      rows.push({ date: s.date, ...d, id: idName(d.name) });
-  return rows;
-}
+/* ---------------- reports (admin only) ---------------- */
 // "sessions" = a session over 1h15 counts twice; "cases" = every attended patient counts once
 const METRICS = { sessions: { one: "جلسة", many: "الجلسات" }, cases: { one: "حالة", many: "الحالات" } };
-const valOf = r => state.metric === "cases" ? (r.cases ?? r.attended) : r.attended;
+const valOf = r => state.metric === "cases" ? r.cases : r.sessions;
+const fmtN = n => Math.round(n).toLocaleString("en-US");
+const fmtP = x => (Math.round(x * 1000) / 10).toFixed(1) + "%";
+const isoOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const monthStart = iso => iso.slice(0, 8) + "01";
+const monthEnd = iso => { const d = new Date(iso.slice(0, 8) + "01T12:00:00"); d.setMonth(d.getMonth() + 1); d.setDate(0); return isoOf(d); };
+const PRESETS = [["month", "الشهر ده"], ["last", "الشهر اللي فات"], ["d7", "آخر 7 أيام"], ["d30", "آخر 30 يوم"], ["all", "كل الفترة"], ["custom", "تواريخ معيّنة"]];
+
+function rangeOf(preset, from, to) {
+  const t = cairoNow().date;
+  if (preset === "month") return { from: monthStart(t), to: t };
+  if (preset === "last") { const p = addDays(monthStart(t), -1); return { from: monthStart(p), to: monthEnd(p) }; }
+  if (preset === "d7") return { from: addDays(t, -6), to: t };
+  if (preset === "d30") return { from: addDays(t, -29), to: t };
+  if (preset === "all") { const ds = state.stats.map(s => s.date).sort(); return { from: ds[0] || t, to: ds[ds.length - 1] || t }; }
+  return { from: from || monthStart(t), to: to || t };
+}
+const rangeLabel = r => r.from === r.to ? arDate(r.from) :
+  `${arDate(r.from, { day: "numeric", month: "short", year: "numeric" })} ← ${arDate(r.to, { day: "numeric", month: "short", year: "numeric" })}`;
+
+// one row per doctor per closed day
+function rowsIn(range) {
+  const rows = [];
+  for (const s of state.stats) {
+    if (s.date < range.from || s.date > range.to) continue;
+    for (const d of Object.values(s.doctors || {})) {
+      rows.push({
+        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d),
+        sessions: d.attended || 0, cases: d.cases ?? d.attended ?? 0, noShow: d.noShow || 0,
+        booked: d.booked || 0, unmarked: d.unmarked || 0, treat: d.treat || {},
+      });
+    }
+  }
+  return rows;
+}
+function agg(rows) {
+  const a = { sessions: 0, cases: 0, noShow: 0, booked: 0, unmarked: 0, treat: {}, ids: new Set(), days: new Set() };
+  for (const r of rows) {
+    a.sessions += r.sessions; a.cases += r.cases; a.noShow += r.noShow; a.booked += r.booked; a.unmarked += r.unmarked;
+    a.ids.add(r.id); a.days.add(r.date);
+    for (const [t, n] of Object.entries(r.treat)) a.treat[t] = (a.treat[t] || 0) + n;
+  }
+  a.rate = a.cases + a.noShow ? a.noShow / (a.cases + a.noShow) : 0;
+  a.treatTotal = Object.values(a.treat).reduce((x, y) => x + y, 0);
+  a.treatTypes = Object.keys(a.treat).length;
+  a.topTreat = Object.entries(a.treat).sort((x, y) => y[1] - x[1])[0]?.[0] || "—";
+  a.doctors = a.ids.size; a.nDays = a.days.size;
+  a.perDay = a.nDays ? valOf(a) / a.nDays : 0;
+  return a;
+}
+function groupBy(rows, key) {
+  const m = new Map();
+  for (const r of rows) { const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+  return m;
+}
+const deptCell = n => `<span class="dept-name">${deptColor(n) ? `<span class="dot" style="background:${deptColor(n)}"></span>` : ""}${esc(n)}</span>`;
+const delta = (a, b) => {
+  if (!b) return a ? `<span class="up">جديد</span>` : "—";
+  const p = (a - b) / b;
+  const cls = Math.abs(p) < 0.005 ? "flat" : p > 0 ? "up" : "down";
+  return `<span class="${cls}">${p > 0 ? "▲" : p < 0 ? "▼" : "•"} ${fmtP(Math.abs(p))}</span>`;
+};
+const deltaBad = (a, b) => delta(a, b).replace('class="up"', 'class="tmp"').replace('class="down"', 'class="up"').replace('class="tmp"', 'class="down"');
+
+function periodPicker(prefix, sel) {
+  const r = rangeOf(sel.preset, sel.from, sel.to);
+  return `<div class="period">
+    <div class="chips">${PRESETS.map(([k, l]) => `<button class="chip ${sel.preset === k ? "active" : ""}" data-${prefix}p="${k}">${l}</button>`).join("")}</div>
+    <label class="field">من <input type="date" data-${prefix}from value="${r.from}"></label>
+    <label class="field">لحد <input type="date" data-${prefix}to value="${r.to}"></label>
+  </div>`;
+}
+function bindPeriod(el, prefix, sel, rerender) {
+  el.querySelectorAll(`[data-${prefix}p]`).forEach(b => b.onclick = () => { sel.preset = b.getAttribute(`data-${prefix}p`); rerender(); });
+  const f = el.querySelector(`[data-${prefix}from]`), t = el.querySelector(`[data-${prefix}to]`);
+  const onDate = () => { sel.preset = "custom"; sel.from = f.value; sel.to = t.value; if (sel.from > sel.to) [sel.from, sel.to] = [sel.to, sel.from]; rerender(); };
+  if (f) f.onchange = onDate;
+  if (t) t.onchange = onDate;
+}
+function deptSelectBar() {
+  const names = [...new Set(state.stats.flatMap(s => Object.values(s.doctors || {}).map(deptOf)))].sort();
+  if (state.rep.dept !== "all" && !names.includes(state.rep.dept)) state.rep.dept = "all";
+  return `<label class="field">القسم <select data-dept-filter>
+    <option value="all">كل الأقسام</option>${names.map(n => `<option value="${esc(n)}" ${state.rep.dept === n ? "selected" : ""}>${esc(n)}</option>`).join("")}
+  </select></label>`;
+}
 function metricChips() {
   return `<div class="chips">${Object.entries(METRICS).map(([k, m]) =>
     `<button class="chip ${state.metric === k ? "active" : ""}" data-metric="${k}">${m.many}</button>`).join("")}</div>`;
 }
-function bindMetric(el, rerender) {
+function bindCommon(el, rerender) {
   el.querySelectorAll("[data-metric]").forEach(b => b.onclick = () => { state.metric = b.dataset.metric; ls.set("metric", state.metric); rerender(); });
+  const ds = el.querySelector("[data-dept-filter]");
+  if (ds) ds.onchange = () => { state.rep.dept = ds.value; rerender(); };
 }
-
-function byDoctor(rows) {
-  const m = new Map();
-  for (const r of rows) {
-    const o = m.get(r.id) || { name: r.name, section: r.section, attended: 0, noShow: 0, booked: 0, days: 0, perDay: {} };
-    o.section = r.section || o.section;            // rows are date-ordered -> latest section wins
-    o.dept = deptOf(o);
-    o.cases = (o.cases || 0) + (r.cases ?? r.attended);
-    o.attended += valOf(r); o.noShow += r.noShow; o.booked += r.booked; o.days += 1;
-    o.perDay[r.date] = (o.perDay[r.date] || 0) + valOf(r);
-    if (!o.noShowDay) o.noShowDay = {};
-    o.noShowDay[r.date] = (o.noShowDay[r.date] || 0) + r.noShow;
-    m.set(r.id, o);
-  }
-  return [...m.values()].sort((a, b) => b.attended - a.attended);
-}
+const inDept = r => state.rep.dept === "all" || r.dept === state.rep.dept;
+const adminOnly = el => { el.innerHTML = `<div class="empty"><div class="big">🔒</div><h2>الصفحة دي للأدمن بس</h2></div>`; };
+const noData = msg => `<div class="empty"><div class="big">📊</div><h2>${msg}</h2><p>الأرقام بتيجي من الأيام المقفولة (بعد ما الدكاترة يعملوا Submit أو اليوم يتقفل الساعة 12 بالليل).</p></div>`;
 
 /* ---------------- STATS ---------------- */
 function renderStats() {
   const el = $("#view-stats");
-  const months = [...new Set(state.stats.map(s => s.date.slice(0, 7)))].sort().reverse();
-  if (!months.length) {
-    el.innerHTML = `<div class="empty"><div class="big">📊</div><h2>لسه مفيش أيام مقفولة</h2><p>أول ما يوم يتقفل، عدد جلسات كل دكتور هيظهر هنا.</p></div>`;
+  if (!state.admin) return adminOnly(el);
+  const M = METRICS[state.metric];
+  const range = rangeOf(state.rep.preset, state.rep.from, state.rep.to);
+  const all = rowsIn(range);
+  const rows = all.filter(inDept);
+  const A = agg(rows);
+  const head = `<div class="toolbar"><div class="day-title"><h2>الإحصائيات</h2><div class="sub">${rangeLabel(range)}${state.rep.dept !== "all" ? " · " + esc(state.rep.dept) : ""}</div></div>
+      <div class="spacer"></div><button class="ghost" id="csvBtn">⬇ Excel</button><button class="danger" id="delBtn">🗑 مسح داتا</button></div>
+    <div class="card filters">${periodPicker("s", state.rep)}<div class="filter-row">${deptSelectBar()}${metricChips()}</div></div>`;
+  if (!rows.length) {
+    el.innerHTML = head + noData("مفيش أرقام في الفترة دي");
+    bindPeriod(el, "s", state.rep, renderStats); bindCommon(el, renderStats);
+    $("#delBtn").onclick = deleteData;
     return;
   }
-  if (!months.includes(state.statsMonth)) state.statsMonth = months[0];
-  const docs = state.stats.filter(s => s.date.startsWith(state.statsMonth)).sort((a, b) => a.date.localeCompare(b.date));
-  const dates = docs.map(s => s.date);
-  const listAll = byDoctor(rowsFrom(docs));
-  const deptNames = [...new Set(listAll.map(d => d.dept))].sort();
-  const deptBar = deptChips(deptNames);
-  const list = listAll.filter(d => inDept(d.dept));
-  const tot = list.reduce((a, d) => ({ att: a.att + d.attended, ns: a.ns + d.noShow }), { att: 0, ns: 0 });
-  const pct = (a, n) => a + n ? Math.round(a / (a + n) * 100) + "%" : "—";
 
-  const M = METRICS[state.metric];
-  el.innerHTML = `<div class="toolbar">
-      <div class="day-title"><h2>الإحصائيات</h2><div class="sub">${state.metric === "cases"
-        ? "عدد الحالات اللي حضرت لكل دكتور في كل يوم (كل مريض = حالة واحدة)"
-        : "عدد الجلسات اللي حضرت لكل دكتور في كل يوم (الجلسة الأطول من ساعة وربع = جلستين)"}</div></div>
-      <div class="spacer"></div>
-      ${metricChips()}
-      ${state.admin ? `<button class="danger" id="delBtn">🗑 مسح داتا</button>` : ""}
-      <label class="field">الشهر:
-        <select id="monthSel">${months.map(m => `<option value="${m}" ${m === state.statsMonth ? "selected" : ""}>${new Date(m + "-15").toLocaleDateString("ar-EG-u-nu-latn", { month: "long", year: "numeric" })}</option>`).join("")}</select></label>
-      <button class="ghost" id="csvBtn">⬇ Excel (CSV)</button>
+  // departments (all of them, so the selected one can be compared with the rest)
+  const byDept = [...groupBy(all, r => r.dept)].map(([k, v]) => ({ k, a: agg(v) })).sort((x, y) => valOf(y.a) - valOf(x.a));
+  const allA = agg(all);
+  // doctors
+  const docs = [...groupBy(rows, r => r.id)].map(([id, v]) => ({ id, name: v[v.length - 1].name, dept: v[v.length - 1].dept, a: agg(v) }));
+  const sortKey = { name: d => d.name.toLowerCase(), dept: d => d.dept, days: d => d.a.nDays, sessions: d => d.a.sessions, cases: d => d.a.cases,
+    noShow: d => d.a.noShow, rate: d => d.a.rate, treat: d => d.a.treatTotal, perDay: d => d.a.perDay }[state.rep.sort] || (d => d.a.sessions);
+  docs.sort((x, y) => { const a = sortKey(x), b = sortKey(y); return (a > b ? 1 : a < b ? -1 : 0) * state.rep.dir; });
+  // treatments by department
+  const treatNames = Object.entries(A.treat).sort((x, y) => y[1] - x[1]).map(x => x[0]);
+  const tDepts = state.rep.dept === "all" ? byDept.map(d => d.k) : [state.rep.dept];
+  // day by day
+  const dates = [...A.days].sort();
+
+  const th = (key, label) => `<th class="sortable ${state.rep.sort === key ? "sorted" : ""}" data-sort="${key}">${label}${state.rep.sort === key ? (state.rep.dir < 0 ? " ▾" : " ▴") : ""}</th>`;
+  el.innerHTML = head + `
+    <div class="kpis">
+      <div class="card kpi"><div class="k">الجلسات اللي اتعملت</div><div class="v">${fmtN(A.sessions)}</div><div class="s">${fmtN(A.sessions / Math.max(1, A.nDays))} في اليوم · ${A.nDays} يوم</div></div>
+      <div class="card kpi"><div class="k">الحالات (المرضى اللي حضروا)</div><div class="v">${fmtN(A.cases)}</div><div class="s">${fmtN(A.sessions - A.cases)} جلسة اتحسبت جلستين</div></div>
+      <div class="card kpi bad"><div class="k">محضرش (كنسل)</div><div class="v">${fmtN(A.noShow)}</div><div class="s">${fmtP(A.rate)} من الحالات</div></div>
+      <div class="card kpi"><div class="k">العلاجات</div><div class="v">${fmtN(A.treatTotal)}</div><div class="s">${A.treatTypes} نوع · أكتر واحد ${esc(A.topTreat)}</div></div>
+      <div class="card kpi"><div class="k">الدكاترة</div><div class="v">${A.doctors}</div><div class="s">${fmtN(valOf(A) / Math.max(1, A.doctors))} ${M.one} للدكتور</div></div>
     </div>
-    ${deptSummary(listAll, M)}
-    <div class="toolbar"><span class="field">القسم:</span>${deptBar}</div>
-    <div class="card"><div class="table-wrap"><table class="stats">
-      <thead><tr><th class="nm">الدكتور</th><th>القسم</th>
-        ${dates.map(d => `<th class="day ${state.admin ? "link" : ""}" data-date="${d}" title="${arDate(d)}">${shortDate(d)}</th>`).join("")}
-        <th>إجمالي ${M.many}</th><th>غياب</th><th>نسبة الحضور</th></tr></thead>
-      <tbody>${list.map(d => `<tr><td class="nm">${esc(d.name)}</td><td style="direction:ltr">${deptColor(d.dept) ? `<span class="dot" style="background:${deptColor(d.dept)}"></span>` : ""}${esc(d.dept)}</td>
-        ${dates.map(dt => {
-          const v = d.perDay[dt];
-          return v == null ? `<td class="zero">·</td>` : `<td class="${v ? "" : "zero"}" title="غياب: ${d.noShowDay[dt] || 0}">${v}</td>`;
-        }).join("")}
-        <td class="tot">${d.attended}</td><td class="ns">${d.noShow || ""}</td><td>${pct(d.attended, d.noShow)}</td></tr>`).join("")}</tbody>
-      <tfoot><tr><td class="nm">الإجمالي${state.dept === "all" ? "" : ` · ${esc(state.dept)}`}</td><td></td>
-        ${dates.map(dt => `<td>${list.reduce((a, d) => a + (d.perDay[dt] || 0), 0)}</td>`).join("")}
-        <td class="tot">${tot.att}</td><td class="ns">${tot.ns}</td><td>${pct(tot.att, tot.ns)}</td></tr></tfoot>
-    </table></div></div>`;
 
-  $("#monthSel").onchange = e => { state.statsMonth = e.target.value; renderStats(); };
-  bindMetric(el, renderStats);
-  bindDept(el, renderStats);
-  $("#delBtn")?.addEventListener("click", deleteData);
-  $("#csvBtn").onclick = () => {
-    const head = ["Doctor", "Section", ...dates, "Total", "No-show"];
-    const lines = [head, ...list.map(d => [d.name, d.dept, ...dates.map(dt => d.perDay[dt] ?? ""), d.attended, d.noShow])];
-    const csv = "﻿" + lines.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    a.download = `sessions-${state.statsMonth}${state.dept === "all" ? "" : "-" + state.dept}.csv`; a.click();
-  };
-  if (state.admin) el.querySelectorAll("th.day").forEach(th => th.onclick = () => { state.override = true; watchDay(th.dataset.date); setView("today"); });
-}
+    <section class="card block">
+      <h3>الأقسام</h3><p class="hint">دوس على قسم عشان تشوف دكاترته وعلاجاته بس.</p>
+      <div class="table-wrap"><table class="stats rep">
+        <thead><tr><th class="nm">القسم</th><th>الدكاترة</th><th>الجلسات</th><th>الحالات</th><th>محضرش</th><th>نسبة الكنسل</th><th>العلاجات</th><th>أنواع العلاج</th><th>أكتر علاج</th><th>${M.many} / يوم</th></tr></thead>
+        <tbody>${byDept.map(({ k, a }) => `<tr class="click ${state.rep.dept === k ? "picked" : ""}" data-pick-dept="${esc(k)}">
+          <td class="nm">${deptCell(k)}</td><td>${a.doctors}</td><td><b>${fmtN(a.sessions)}</b></td><td>${fmtN(a.cases)}</td><td class="ns">${fmtN(a.noShow)}</td>
+          <td>${fmtP(a.rate)}</td><td>${fmtN(a.treatTotal)}</td><td>${a.treatTypes}</td><td>${esc(a.topTreat)}</td><td>${fmtN(a.perDay)}</td></tr>`).join("")}</tbody>
+        <tfoot><tr><td class="nm">كل الأقسام</td><td>${allA.doctors}</td><td>${fmtN(allA.sessions)}</td><td>${fmtN(allA.cases)}</td><td class="ns">${fmtN(allA.noShow)}</td>
+          <td>${fmtP(allA.rate)}</td><td>${fmtN(allA.treatTotal)}</td><td>${allA.treatTypes}</td><td>${esc(allA.topTreat)}</td><td>${fmtN(allA.perDay)}</td></tr></tfoot>
+      </table></div>
+    </section>
 
-const inDept = name => state.dept === "all" || name === state.dept;
-function deptChips(names) {
-  if (state.dept !== "all" && !names.includes(state.dept)) state.dept = "all";
-  return `<div class="chips">${["all", ...names].map(n => `<button class="chip ${state.dept === n ? "active" : ""}" data-dfilter="${esc(n)}">${n !== "all" && deptColor(n) ? `<span class="dot" style="background:${deptColor(n)}"></span>` : ""}${n === "all" ? "كل الأقسام" : esc(n)}</button>`).join("")}</div>`;
-}
-function bindDept(el, rerender) {
-  el.querySelectorAll("[data-dfilter]").forEach(b => b.onclick = () => {
-    state.dept = state.dept === b.dataset.dfilter && b.dataset.dfilter !== "all" ? "all" : b.dataset.dfilter;
-    rerender();
+    <section class="card block">
+      <h3>الدكاترة</h3><p class="hint">دوس على عنوان أي عمود عشان ترتّب بيه، ودوس على اسم الدكتور عشان تشوف تفاصيله.</p>
+      <div class="table-wrap"><table class="stats rep">
+        <thead><tr>${th("name", "الدكتور")}${th("dept", "القسم")}${th("days", "أيام")}${th("sessions", "الجلسات")}${th("cases", "الحالات")}${th("noShow", "محضرش")}${th("rate", "نسبة الكنسل")}${th("treat", "العلاجات")}${th("perDay", M.many + " / يوم")}</tr></thead>
+        <tbody>${docs.map(d => `<tr><td class="nm"><button class="link" data-doc="${esc(d.id)}">${esc(d.name)}</button></td><td>${deptCell(d.dept)}</td>
+          <td>${d.a.nDays}</td><td><b>${fmtN(d.a.sessions)}</b></td><td>${fmtN(d.a.cases)}</td><td class="ns">${fmtN(d.a.noShow)}</td>
+          <td class="${d.a.rate > A.rate ? "hi" : ""}">${fmtP(d.a.rate)}</td><td>${fmtN(d.a.treatTotal)}</td><td>${(Math.round(d.a.perDay * 10) / 10).toFixed(1)}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </section>
+
+    <section class="card block">
+      <h3>أنواع العلاج</h3><p class="hint">عدد مرات كل علاج في الجلسات اللي حضرت (mt*2 بيتحسب مرتين).</p>
+      <div class="table-wrap"><table class="stats rep">
+        <thead><tr><th class="nm">العلاج</th>${tDepts.map(k => `<th>${deptCell(k)}</th>`).join("")}${tDepts.length > 1 ? "<th>الإجمالي</th>" : ""}<th>من كل العلاجات</th></tr></thead>
+        <tbody>${treatNames.map(t => { const tot = A.treat[t]; return `<tr><td class="nm">${esc(t)}</td>
+          ${tDepts.map(k => { const v = byDept.find(x => x.k === k)?.a.treat[t] || 0; return `<td class="${v ? "" : "zero"}">${v ? fmtN(v) : "·"}</td>`; }).join("")}
+          ${tDepts.length > 1 ? `<td class="tot">${fmtN(tot)}</td>` : ""}<td><span class="bar-cell"><i style="width:${Math.round(tot / A.treatTotal * 100)}%"></i>${fmtP(tot / A.treatTotal)}</span></td></tr>`; }).join("")}</tbody>
+        <tfoot><tr><td class="nm">المجموع (${treatNames.length} نوع)</td>${tDepts.map(k => `<td>${fmtN(byDept.find(x => x.k === k)?.a.treatTotal || 0)}</td>`).join("")}${tDepts.length > 1 ? `<td class="tot">${fmtN(A.treatTotal)}</td>` : ""}<td>100%</td></tr></tfoot>
+      </table></div>
+    </section>
+
+    <details class="card block">
+      <summary><h3>يوم بيوم لكل دكتور</h3></summary>
+      <div class="table-wrap"><table class="stats">
+        <thead><tr><th class="nm">الدكتور</th>${dates.map(d => `<th class="day" title="${arDate(d)}">${shortDate(d)}</th>`).join("")}<th>الإجمالي</th></tr></thead>
+        <tbody>${docs.map(d => { const per = {}; rows.filter(r => r.id === d.id).forEach(r => per[r.date] = (per[r.date] || 0) + valOf(r));
+          return `<tr><td class="nm">${esc(d.name)}</td>${dates.map(dt => per[dt] == null ? `<td class="zero">·</td>` : `<td>${per[dt]}</td>`).join("")}<td class="tot">${fmtN(valOf(d.a))}</td></tr>`; }).join("")}</tbody>
+      </table></div>
+    </details>`;
+
+  bindPeriod(el, "s", state.rep, renderStats);
+  bindCommon(el, renderStats);
+  $("#delBtn").onclick = deleteData;
+  el.querySelectorAll("[data-pick-dept]").forEach(tr => tr.onclick = () => {
+    state.rep.dept = state.rep.dept === tr.dataset.pickDept ? "all" : tr.dataset.pickDept; renderStats();
   });
+  el.querySelectorAll("[data-sort]").forEach(h => h.onclick = () => {
+    if (state.rep.sort === h.dataset.sort) state.rep.dir *= -1; else { state.rep.sort = h.dataset.sort; state.rep.dir = h.dataset.sort === "name" || h.dataset.sort === "dept" ? 1 : -1; }
+    renderStats();
+  });
+  el.querySelectorAll("[data-doc]").forEach(b => b.onclick = () => doctorDetail(b.dataset.doc, range, rows));
+  $("#csvBtn").onclick = () => downloadCsv(`doctors-${range.from}-${range.to}.csv`,
+    [["Doctor", "Department", "Days", "Sessions", "Cases", "No-show", "Cancel rate", "Treatments", ...treatNames],
+     ...docs.map(d => [d.name, d.dept, d.a.nDays, d.a.sessions, d.a.cases, d.a.noShow, fmtP(d.a.rate), d.a.treatTotal, ...treatNames.map(t => d.a.treat[t] || 0)])]);
 }
 
-function deptSummary(list, M) {
-  const by = {};
-  for (const d of list) {
-    const o = by[d.dept] || (by[d.dept] = { att: 0, ns: 0, docs: 0 });
-    o.att += d.attended; o.ns += d.noShow; o.docs += 1;
-  }
-  const rows = Object.entries(by).sort((a, b) => b[1].att - a[1].att);
-  return `<div class="dept-cards">${rows.map(([n, o]) => `
-    <div class="card dept-card ${state.dept === n ? "active" : ""}" data-dfilter="${esc(n)}" role="button" title="اعرض القسم ده بس" ${dcStyle(n)}>
-      <div class="k">${deptColor(n) ? `<span class="dot" style="background:${deptColor(n)}"></span>` : ""}<b dir="ltr">${esc(n)}</b></div>
-      <div class="v">${o.att}</div>
-      <div class="s">${M.many} · ${o.docs} دكتور · غياب ${o.ns}</div>
-    </div>`).join("")}</div>`;
+function doctorDetail(id, range, rows) {
+  const mine = rows.filter(r => r.id === id);
+  if (!mine.length) return;
+  const a = agg(mine), dept = mine[mine.length - 1].dept;
+  const peers = [...groupBy(rows.filter(r => r.dept === dept), r => r.id)].map(([, v]) => agg(v));
+  const avg = k => peers.reduce((x, p) => x + p[k], 0) / Math.max(1, peers.length);
+  const days = [...groupBy(mine, r => r.date)].sort((x, y) => x[0].localeCompare(y[0]));
+  const treat = Object.entries(a.treat).sort((x, y) => y[1] - x[1]);
+  modal(`${mine[mine.length - 1].name} · ${dept}`, `
+    <p class="hint">${rangeLabel(range)}</p>
+    <table class="mini"><thead><tr><th></th><th>الدكتور</th><th>متوسط دكاترة القسم</th></tr></thead><tbody>
+      <tr><td>الجلسات</td><td><b>${fmtN(a.sessions)}</b></td><td>${fmtN(avg("sessions"))}</td></tr>
+      <tr><td>الحالات</td><td><b>${fmtN(a.cases)}</b></td><td>${fmtN(avg("cases"))}</td></tr>
+      <tr><td>محضرش</td><td><b>${fmtN(a.noShow)}</b> (${fmtP(a.rate)})</td><td>${fmtN(avg("noShow"))}</td></tr>
+      <tr><td>العلاجات</td><td><b>${fmtN(a.treatTotal)}</b></td><td>${fmtN(avg("treatTotal"))}</td></tr>
+      <tr><td>أيام الشغل</td><td><b>${a.nDays}</b></td><td>${fmtN(avg("nDays"))}</td></tr>
+    </tbody></table>
+    <h4>العلاجات</h4>
+    <div class="treat-chips">${treat.map(([t, n]) => `<span>${esc(t)} <b>${n}</b></span>`).join("") || "—"}</div>
+    <h4>يوم بيوم</h4>
+    <table class="mini"><thead><tr><th>اليوم</th><th>جلسات</th><th>حالات</th><th>محضرش</th></tr></thead><tbody>
+      ${days.map(([d, v]) => { const x = agg(v); return `<tr><td>${arDate(d, { weekday: "short", day: "numeric", month: "short" })}</td><td>${x.sessions}</td><td>${x.cases}</td><td class="ns">${x.noShow || ""}</td></tr>`; }).join("")}
+    </tbody></table>`, { ok: "تمام", cancel: "" });
+}
+
+function downloadCsv(name, lines) {
+  const csv = "﻿" + lines.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = name; a.click();
 }
 
 async function deleteData() {
@@ -568,123 +680,118 @@ async function deleteData() {
   catch (e) { console.error(e); toast("المسح فشل — جرّب تاني"); }
 }
 
-/* ---------------- ANALYSIS ---------------- */
-function periodFilter(stats) {
-  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const today = iso(new Date());
-  const back = n => { const d = new Date(); d.setDate(d.getDate() - n); return iso(d); };
-  const thisM = today.slice(0, 7);
-  const lastMd = new Date(); lastMd.setDate(1); lastMd.setMonth(lastMd.getMonth() - 1);
-  const lastM = iso(lastMd).slice(0, 7);
-  return {
-    month: s => s.date.startsWith(thisM),
-    last: s => s.date.startsWith(lastM),
-    d30: s => s.date >= back(30),
-    all: () => true,
-  }[state.period] || (() => true);
-}
-
+/* ---------------- COMPARE + CHARTS ---------------- */
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+const WEEK = ["السبت", "الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"];
+const weekdayOf = iso => WEEK[(new Date(iso + "T12:00:00").getDay() + 1) % 7];
 
 function renderAnalysis() {
   state.charts.forEach(c => c.destroy()); state.charts = [];
   const el = $("#view-analysis");
-  const stats = state.stats.filter(periodFilter(state.stats)).sort((a, b) => a.date.localeCompare(b.date));
-  const periods = [["month", "الشهر ده"], ["last", "الشهر اللي فات"], ["d30", "آخر 30 يوم"], ["all", "كل الفترة"]];
+  if (!state.admin) return adminOnly(el);
   const M = METRICS[state.metric];
-  const filters = `<div class="toolbar"><div class="day-title"><h2>Analysis</h2><div class="sub">الأرقام من الأيام المقفولة بس</div></div>
-    <div class="spacer"></div>${metricChips()}<div class="chips">${periods.map(([k, l]) => `<button class="chip ${state.period === k ? "active" : ""}" data-p="${k}">${l}</button>`).join("")}</div></div>`;
-  const bind = () => {
-    el.querySelectorAll("[data-p]").forEach(b => b.onclick = () => { state.period = b.dataset.p; renderAnalysis(); });
-    bindMetric(el, renderAnalysis);
-    bindDept(el, renderAnalysis);
-  };
-  if (!stats.length) {
-    el.innerHTML = filters + `<div class="empty"><div class="big">📈</div><h2>مفيش داتا في الفترة دي</h2><p>الأرقام بتبدأ من أول يوم الدكاترة يعملوا فيه Submit. جرّب «كل الفترة».</p></div>`;
-    bind();
-    return;
-  }
-  const rowsAll = rowsFrom(stats);
-  const deptBar = deptChips([...new Set(rowsAll.map(deptOf))].sort());
-  const rows = rowsAll.filter(r => inDept(deptOf(r)));
-  if (!rows.length) {
-    el.innerHTML = filters + `<div class="toolbar"><span class="field">القسم:</span>${deptBar}</div><div class="empty"><h2>مفيش داتا للقسم ده في الفترة دي</h2></div>`;
-    bind();
-    return;
-  }
-  const docs = byDoctor(rows);
-  const att = docs.reduce((a, d) => a + d.attended, 0);
-  const ns = docs.reduce((a, d) => a + d.noShow, 0);
-  const cases = rows.reduce((a, r) => a + (r.cases ?? r.attended), 0);
-  const rate = cases + ns ? Math.round(cases / (cases + ns) * 100) : 0;
-  const perDay = stats.map(s => {
-    const v = rows.filter(r => r.date === s.date);
-    return { date: s.date, att: v.reduce((a, d) => a + valOf(d), 0), ns: v.reduce((a, d) => a + d.noShow, 0) };
-  }).filter(d => d.att || d.ns);
-  const best = perDay.reduce((a, b) => b.att > a.att ? b : a);
-  const secMap = {};
-  rows.forEach(r => { const k = deptOf(r); secMap[k] = (secMap[k] || 0) + valOf(r); });
-  const secs = Object.entries(secMap).sort((a, b) => b[1] - a[1]);
-  const nsRate = d => d.noShow / ((d.cases || d.attended) + d.noShow);
-  const worstNs = [...docs].filter(d => d.attended + d.noShow >= 5).sort((a, b) => nsRate(b) - nsRate(a))[0];
-  const avgDoc = Math.round(att / Math.max(1, rows.length) * 10) / 10;
+  const rA = rangeOf(state.cmpA.preset, state.cmpA.from, state.cmpA.to);
+  const rB = rangeOf(state.cmpB.preset, state.cmpB.from, state.cmpB.to);
+  const rowsA = rowsIn(rA).filter(inDept), rowsB = rowsIn(rB).filter(inDept);
+  const A = agg(rowsA), B = agg(rowsB);
+  const perDay = (a, k) => a.nDays ? a[k] / a.nDays : 0;
 
-  el.innerHTML = filters + `
-    <div class="toolbar"><span class="field">القسم:</span>${deptBar}</div>
-    <div class="kpis">
-      <div class="card kpi"><div class="k">إجمالي ${M.many}</div><div class="v">${att}</div><div class="s">في ${perDay.length} يوم</div></div>
-      <div class="card kpi"><div class="k">متوسط ${M.many} في اليوم</div><div class="v">${Math.round(att / Math.max(1, perDay.length))}</div><div class="s">أعلى يوم: ${best.att} (${shortDate(best.date)})</div></div>
-      <div class="card kpi"><div class="k">متوسط الدكتور في اليوم</div><div class="v">${avgDoc}</div><div class="s">${M.one} · ${docs.length} دكتور اشتغلوا</div></div>
-      <div class="card kpi"><div class="k">نسبة الحضور</div><div class="v">${rate}%</div><div class="s">${ns} مريض محضرش</div></div>
-      <div class="card kpi"><div class="k">أكتر دكتور ${M.many}</div><div class="v" style="font-size:22px;direction:ltr;text-align:right">${esc(docs[0].name)}</div><div class="s">${docs[0].attended} ${M.one} · ${docs[0].days} يوم</div></div>
+  const metricsRows = [
+    ["الجلسات", A.sessions, B.sessions, false], ["الحالات", A.cases, B.cases, false], ["محضرش (كنسل)", A.noShow, B.noShow, true],
+    ["العلاجات", A.treatTotal, B.treatTotal, false], ["الدكاترة", A.doctors, B.doctors, false], ["أيام الشغل", A.nDays, B.nDays, false],
+  ];
+  const deptsA = groupBy(rowsA, r => r.dept), deptsB = groupBy(rowsB, r => r.dept);
+  const deptNames = [...new Set([...deptsA.keys(), ...deptsB.keys()])];
+  const dRows = deptNames.map(k => ({ k, a: agg(deptsA.get(k) || []), b: agg(deptsB.get(k) || []) })).sort((x, y) => valOf(y.a) - valOf(x.a));
+  const docsA = groupBy(rowsA, r => r.id), docsB = groupBy(rowsB, r => r.id);
+  const docIds = [...new Set([...docsA.keys(), ...docsB.keys()])];
+  const docRows = docIds.map(id => {
+    const va = docsA.get(id) || [], vb = docsB.get(id) || [];
+    const last = (va[va.length - 1] || vb[vb.length - 1]);
+    return { id, name: last.name, dept: last.dept, a: agg(va), b: agg(vb) };
+  }).sort((x, y) => (valOf(y.a) - valOf(y.b)) - (valOf(x.a) - valOf(x.b)));
+
+  el.innerHTML = `<div class="toolbar"><div class="day-title"><h2>المقارنة والرسوم</h2><div class="sub">قارن أي فترتين: شهر بشهر، أسبوع بأسبوع، أو تواريخ تختارها</div></div></div>
+    <div class="card filters">
+      <div class="cmp-head"><span class="tag a">الفترة الأولى</span>${periodPicker("a", state.cmpA)}</div>
+      <div class="cmp-head"><span class="tag b">الفترة التانية</span>${periodPicker("b", state.cmpB)}</div>
+      <div class="filter-row">${deptSelectBar()}${metricChips()}</div>
     </div>
-    <div class="card explain">
-      <b>إزاي تقرا الأرقام:</b> ${state.metric === "cases"
-        ? `كل مريض الدكتور علّمه <b style="color:var(--good)">أخضر</b> بيتحسب <b>حالة واحدة</b> مهما كانت مدة الجلسة.`
-        : `كل جلسة الدكتور علّمها <b style="color:var(--good)">أخضر</b> بتتحسب جلسة، ولو الجلسة أطول من ساعة وربع بتتحسب <b>جلستين</b>.`}
-      الـ<b style="color:var(--bad)">أحمر</b> بيتحسب غياب، والأبيض اللي محدش علّمه مش بيتحسب. أي دكتور جديد يظهر في الشيت بيتضاف هنا لوحده.
-      ${worstNs ? `أعلى نسبة غياب عند <b dir="ltr">${esc(worstNs.name)}</b> (${Math.round(nsRate(worstNs) * 100)}%).` : ""}
-      أكبر قسم شغل: <b dir="ltr">${esc(secs[0][0])}</b> بـ ${secs[0][1]} ${M.one}.
-    </div>
+    ${!rowsA.length && !rowsB.length ? noData("مفيش أرقام في الفترتين دول") : `
+    <section class="card block">
+      <h3>الأرقام جنب بعض</h3>
+      <p class="hint">الفترة الأولى: ${rangeLabel(rA)} · التانية: ${rangeLabel(rB)}. لو الفترتين مش نفس عدد الأيام، قارن «في اليوم».</p>
+      <div class="table-wrap"><table class="stats rep">
+        <thead><tr><th class="nm"></th><th>الفترة الأولى</th><th>الفترة التانية</th><th>الفرق</th><th>الأولى / يوم</th><th>التانية / يوم</th><th>الفرق في اليوم</th></tr></thead>
+        <tbody>${metricsRows.map(([l, a, b, bad]) => {
+          const key = { "الجلسات": "sessions", "الحالات": "cases", "محضرش (كنسل)": "noShow", "العلاجات": "treatTotal" }[l];
+          const d = bad ? deltaBad : delta;
+          return `<tr><td class="nm">${l}</td><td><b>${fmtN(a)}</b></td><td>${fmtN(b)}</td><td>${d(a, b)}</td>
+            ${key ? `<td>${fmtN(perDay(A, key))}</td><td>${fmtN(perDay(B, key))}</td><td>${d(perDay(A, key), perDay(B, key))}</td>` : "<td></td><td></td><td></td>"}</tr>`; }).join("")}
+          <tr><td class="nm">نسبة الكنسل</td><td><b>${fmtP(A.rate)}</b></td><td>${fmtP(B.rate)}</td><td>${deltaBad(A.rate, B.rate)}</td><td></td><td></td><td></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="card block">
+      <h3>الأقسام</h3>
+      <div class="table-wrap"><table class="stats rep">
+        <thead><tr><th class="nm">القسم</th><th>${M.many} الأولى</th><th>${M.many} التانية</th><th>الفرق</th><th>كنسل الأولى</th><th>كنسل التانية</th><th>العلاجات الأولى</th><th>العلاجات التانية</th></tr></thead>
+        <tbody>${dRows.map(({ k, a, b }) => `<tr><td class="nm">${deptCell(k)}</td><td><b>${fmtN(valOf(a))}</b></td><td>${fmtN(valOf(b))}</td><td>${delta(valOf(a), valOf(b))}</td>
+          <td>${fmtP(a.rate)}</td><td>${fmtP(b.rate)}</td><td>${fmtN(a.treatTotal)}</td><td>${fmtN(b.treatTotal)}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </section>
+
+    <section class="card block">
+      <h3>الدكاترة: مين زاد ومين قلّ</h3>
+      <div class="table-wrap"><table class="stats rep">
+        <thead><tr><th class="nm">الدكتور</th><th>القسم</th><th>${M.many} الأولى</th><th>${M.many} التانية</th><th>الفرق</th><th>نسبة الكنسل الأولى</th><th>التانية</th></tr></thead>
+        <tbody>${docRows.map(d => `<tr><td class="nm">${esc(d.name)}</td><td>${deptCell(d.dept)}</td><td><b>${fmtN(valOf(d.a))}</b></td><td>${fmtN(valOf(d.b))}</td>
+          <td>${valOf(d.a) - valOf(d.b) > 0 ? "+" : ""}${fmtN(valOf(d.a) - valOf(d.b))} ${delta(valOf(d.a), valOf(d.b))}</td><td>${fmtP(d.a.rate)}</td><td>${fmtP(d.b.rate)}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </section>
+
     <div class="charts">
-      <div class="card chart-card" style="grid-row:span 2"><h3>${M.many} كل دكتور</h3><p>مترتبين من الأكتر للأقل · الأحمر = عدد اللي محضروش</p><div class="chart-box tall" style="height:${Math.max(320, docs.length * 24 + 40)}px"><canvas id="cDoc"></canvas></div></div>
-      <div class="card chart-card"><h3>${M.many} كل يوم</h3><p>حضر وغاب في كل يوم</p><div class="chart-box"><canvas id="cDay"></canvas></div></div>
-      <div class="card chart-card"><h3>${M.many} حسب القسم</h3><p>OT / Inpatient / Aqua / Outpatient ...</p><div class="chart-box"><canvas id="cSec"></canvas></div></div>
-    </div>`;
-  bind();
+      <div class="card chart-card"><h3>${M.many} كل يوم · الفترة الأولى</h3><p>حضر ومحضرش</p><div class="chart-box"><canvas id="cDay"></canvas></div></div>
+      <div class="card chart-card"><h3>متوسط ${M.many} حسب يوم الأسبوع</h3><p>الفترة الأولى مقابل التانية</p><div class="chart-box"><canvas id="cWeek"></canvas></div></div>
+      <div class="card chart-card"><h3>${M.many} حسب القسم</h3><p>الفترة الأولى مقابل التانية</p><div class="chart-box"><canvas id="cSec"></canvas></div></div>
+      <div class="card chart-card"><h3>أكتر العلاجات</h3><p>الفترة الأولى مقابل التانية</p><div class="chart-box"><canvas id="cTreat"></canvas></div></div>
+    </div>`}`;
 
-  if (!window.Chart) return;
+  bindPeriod(el, "a", state.cmpA, renderAnalysis);
+  bindPeriod(el, "b", state.cmpB, renderAnalysis);
+  bindCommon(el, renderAnalysis);
+  if (!window.Chart || (!rowsA.length && !rowsB.length)) return;
+
   const C = window.Chart;
-  const ink = cssVar("--text-2"), grid = cssVar("--line"), good = cssVar("--good"), bad = cssVar("--bad"), blue = cssVar("--series-1");
-  C.defaults.font.family = "Cairo, system-ui, sans-serif";
+  const ink = cssVar("--text-2"), grid = cssVar("--line"), good = cssVar("--good"), bad = cssVar("--bad"), navy = cssVar("--brand"), sky = cssVar("--series-1");
+  C.defaults.font.family = "IBM Plex Sans Arabic, system-ui, sans-serif";
   C.defaults.color = ink;
-  const base = {
-    maintainAspectRatio: false, animation: { duration: 250 },
-    plugins: { legend: { labels: { usePointStyle: true, boxWidth: 8 } }, tooltip: { rtl: true, intersect: false, mode: "index" } },
-  };
-  const bar = { borderRadius: 4, borderSkipped: "start", maxBarThickness: 18, borderColor: cssVar("--surface"), borderWidth: { top: 0, bottom: 0, left: 1, right: 1 } };
+  const base = { maintainAspectRatio: false, animation: { duration: 250 },
+    plugins: { legend: { labels: { usePointStyle: true, boxWidth: 8 } }, tooltip: { rtl: true, intersect: false, mode: "index" } } };
+  const bar = { borderRadius: 4, borderSkipped: "start", maxBarThickness: 22 };
+  const axes = (stacked = false) => ({ x: { stacked, grid: { display: false } }, y: { stacked, grid: { color: grid }, ticks: { precision: 0 } } });
 
-  state.charts.push(new C($("#cDoc"), {
-    type: "bar",
-    data: { labels: docs.map(d => d.name), datasets: [
-      { label: "حضر", data: docs.map(d => d.attended), backgroundColor: good, ...bar, stack: "s" },
-      { label: "محضرش", data: docs.map(d => d.noShow), backgroundColor: bad, ...bar, stack: "s" }] },
-    options: { ...base, indexAxis: "y",
-      scales: { x: { stacked: true, grid: { color: grid }, ticks: { precision: 0 } }, y: { stacked: true, grid: { display: false }, ticks: { autoSkip: false, font: { size: 11 } } } } },
-  }));
-  state.charts.push(new C($("#cDay"), {
-    type: "bar",
-    data: { labels: perDay.map(d => shortDate(d.date)), datasets: [
-      { label: "حضر", data: perDay.map(d => d.att), backgroundColor: good, ...bar, stack: "s" },
-      { label: "محضرش", data: perDay.map(d => d.ns), backgroundColor: bad, ...bar, stack: "s" }] },
-    options: { ...base, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, grid: { color: grid }, ticks: { precision: 0 } } } },
-  }));
-  state.charts.push(new C($("#cSec"), {
-    type: "bar",
-    data: { labels: secs.map(s => s[0]), datasets: [{ label: METRICS[state.metric].many, data: secs.map(s => s[1]), backgroundColor: secs.map(s => deptColor(s[0]) || blue), ...bar }] },
-    options: { ...base, plugins: { ...base.plugins, legend: { display: false } },
-      scales: { x: { grid: { display: false } }, y: { grid: { color: grid }, ticks: { precision: 0 } } } },
-  }));
+  const days = [...groupBy(rowsA, r => r.date)].sort((x, y) => x[0].localeCompare(y[0])).map(([d, v]) => ({ d, a: agg(v) }));
+  state.charts.push(new C($("#cDay"), { type: "bar",
+    data: { labels: days.map(x => shortDate(x.d)), datasets: [
+      { label: "حضر", data: days.map(x => valOf(x.a)), backgroundColor: good, ...bar, stack: "s" },
+      { label: "محضرش", data: days.map(x => x.a.noShow), backgroundColor: bad, ...bar, stack: "s" }] },
+    options: { ...base, scales: axes(true) } }));
+
+  const wk = rows => WEEK.map(w => { const v = rows.filter(r => weekdayOf(r.date) === w); const n = new Set(v.map(r => r.date)).size; return n ? Math.round(v.reduce((x, r) => x + valOf(r), 0) / n) : 0; });
+  state.charts.push(new C($("#cWeek"), { type: "bar",
+    data: { labels: WEEK, datasets: [{ label: "الأولى", data: wk(rowsA), backgroundColor: navy, ...bar }, { label: "التانية", data: wk(rowsB), backgroundColor: sky, ...bar }] },
+    options: { ...base, scales: axes() } }));
+
+  state.charts.push(new C($("#cSec"), { type: "bar",
+    data: { labels: dRows.map(x => x.k), datasets: [{ label: "الأولى", data: dRows.map(x => valOf(x.a)), backgroundColor: navy, ...bar }, { label: "التانية", data: dRows.map(x => valOf(x.b)), backgroundColor: sky, ...bar }] },
+    options: { ...base, scales: axes() } }));
+
+  const tn = Object.entries(A.treat).sort((x, y) => y[1] - x[1]).slice(0, 10).map(x => x[0]);
+  state.charts.push(new C($("#cTreat"), { type: "bar",
+    data: { labels: tn, datasets: [{ label: "الأولى", data: tn.map(t => A.treat[t] || 0), backgroundColor: navy, ...bar }, { label: "التانية", data: tn.map(t => B.treat[t] || 0), backgroundColor: sky, ...bar }] },
+    options: { ...base, indexAxis: "y", scales: { x: { grid: { color: grid }, ticks: { precision: 0 } }, y: { grid: { display: false } } } } }));
 }
 
 /* ---------------- boot ---------------- */
@@ -695,14 +802,25 @@ function renderAnalysis() {
     state.admin = isAdmin;
     $("#adminBtn").classList.toggle("on", isAdmin);
     $("#adminBtn").textContent = isAdmin ? "🔓 أدمن" : "🔒 أدمن";
-    if (!isAdmin) { state.override = false; followPick(); }
+    document.querySelectorAll('.tabs [data-view="stats"], .tabs [data-view="analysis"]').forEach(b => b.hidden = !isAdmin);
+    document.querySelector(".tabs").classList.toggle("solo", !isAdmin);
+    if (isAdmin && !state.unsubStats) {
+      state.unsubStats = state.store.onStats(st => { state.stats = st; if (state.view !== "today") render(); else renderToday(); });
+    }
+    if (!isAdmin) {
+      if (state.unsubStats) { state.unsubStats(); state.unsubStats = null; }
+      state.stats = [];
+      state.override = false; followPick();
+      if (state.view !== "today") { setView("today"); return; }
+    }
     render();
   });
   state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, ...s }; render(); });
+  const askedView = new URLSearchParams(location.search).get("view");  // ?view=stats|analysis (admin)
+  if (state.admin && ["stats", "analysis"].includes(askedView)) setView(askedView);
   const askedDay = new URLSearchParams(location.search).get("day");   // ?day=YYYY-MM-DD opens that day
   if (/^\d{4}-\d{2}-\d{2}$/.test(askedDay || "")) { state.override = true; watchDay(askedDay); }
   state.store.onOpenDays(onOpenDays);
   setInterval(followPick, 30000);          // midnight / 9 AM roll-over while the page stays open
-  state.store.onStats(s => { state.stats = s; if (state.view !== "today") render(); else if (state.admin) renderToday(); });
   render();
 })();

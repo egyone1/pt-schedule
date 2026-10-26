@@ -1,10 +1,35 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=11";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=12";
+
+// Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
+// Keep in step with TREATMENTS in importer/run_import.py.
+const TREATMENTS = {
+  mt: "MT", es: "ES", us: "US", ex: "EX", laser: "Laser", "scanner laser": "Laser", shockwave: "Shockwave", shock: "Shockwave",
+  "hot mgt": "Hot pack / Magnet", hotmgt: "Hot pack / Magnet", mgt: "Hot pack / Magnet", hotpak: "Hot pack / Magnet", "hot pack": "Hot pack / Magnet",
+  balance: "Balance", gait: "Gait", pb: "PB", schroth: "Schroth", scroth: "Schroth", shroth: "Schroth",
+  aq: "Aqua", ot: "OT", mld: "MLD", bandage: "Bandaging", bandaging: "Bandaging", comp: "Compression", pressure: "Compression",
+  "lymph press": "Compression", chest: "Chest", tilt: "Tilt table", thera: "Thera", wb: "WB", standing: "Standing",
+  biofeedback: "Biofeedback", "biofeed back": "Biofeedback", bladder: "Bladder rehab", speech: "Speech", release: "Release",
+  bibatron: "Bibatron", tecar: "Tecar", traction: "Traction",
+};
+export function treatmentsOf(details) {
+  const out = {};
+  for (const part of String(details || "").toLowerCase().split(/[+·,/\n]/)) {
+    const times = /[*x×]\s*2|2\s*[*x×]/.test(part) ? 2 : 1;
+    const key = part.replace(/[*x×]?\s*\d+|\d+\s*[*x×]/g, "").replace(/^[\s*"']+|[\s*"']+$/g, "");
+    const name = TREATMENTS[key];
+    if (name) out[name] = (out[name] || 0) + times;
+  }
+  return out;
+}
 
 export function summarize(day) {
   const out = {};
   for (const [key, d] of Object.entries(day.doctors || {})) {
     const ss = d.sessions || [];
+    const treat = {};
+    for (const s of ss.filter(s => s.status === 1))
+      for (const [t, n] of Object.entries(treatmentsOf(s.details))) treat[t] = (treat[t] || 0) + n;
     out[key] = {
       name: d.name,
       section: d.section || "",
@@ -14,6 +39,7 @@ export function summarize(day) {
       cases: ss.filter(s => s.status === 1).length,
       noShow: ss.filter(s => s.status === 2).length,
       unmarked: ss.filter(s => !s.status).length,
+      treat,
     };
   }
   return out;
@@ -114,7 +140,7 @@ async function demoStore() {
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch {} subs.forEach(f => f()); };
   const sub = f => { subs.add(f); f(); return () => subs.delete(f); };
   const clone = o => JSON.parse(JSON.stringify(o));
-  let admin = false; const authSubs = new Set();
+  let admin = new URLSearchParams(location.search).has("admin"); const authSubs = new Set();   // demo only: ?demo&admin
 
   return {
     demo: true,
