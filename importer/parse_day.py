@@ -13,8 +13,9 @@ import datetime as dt
 import re
 import openpyxl
 
+from codes import sheet_mark, units_of
+
 SLOT_MIN = 15
-TWO_SESSION_OVER_MIN = 75          # a session longer than 1h15 counts as two
 
 MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
@@ -160,7 +161,8 @@ def parse_day(path_or_wb, day):
                 "start": start.strftime("%H:%M"),
                 "end": end_dt.strftime("%H:%M"),
                 "minutes": dur,
-                "units": 2 if dur > TWO_SESSION_OVER_MIN else 1,
+                "units": units_of(details),
+                "sheet": sheet_mark(ws.cell(r, c)),   # red = cancelled, yellow = inpatient
                 "status": 0,
             })
         if sessions:

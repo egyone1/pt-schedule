@@ -4,7 +4,9 @@ Every day at 9 PM (Cairo) a GitHub Action reads that day's tab from the customer
 booking workbook on SharePoint and publishes it as the day's schedule. Each therapist taps a
 patient once for **attended** (green), twice for **no-show** (red), and presses **Submit**.
 When every therapist has submitted, the day closes and its totals move to the statistics tab.
-A session longer than 1 h 15 min counts as two sessions.
+Sessions are counted from the codes in the cell (see `importer/codes.py`): ex, balance, pb, wb and gait are a
+session each, the other treatments together are one session (two with mt2), and a cell with only a name is one.
+Every session also keeps the sheet's colour, so reports can be read from the doctors' marks or from the sheet.
 
 - `index.html`, `app.js`, `styles.css`: the site (static, GitHub Pages)
 - `store.js`: Firebase Firestore data layer; demo mode (localStorage) when `config.js` has no `apiKey`

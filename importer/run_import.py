@@ -24,6 +24,7 @@ import urllib.request
 from zoneinfo import ZoneInfo
 
 from firestore_rest import Firestore, sign_in
+from codes import treatments_of
 from parse_day import parse_day
 
 CAIRO = ZoneInfo("Africa/Cairo")
@@ -90,31 +91,14 @@ def summarize(day):
             "noShow": sum(1 for s in ss if s.get("status") == 2),
             "unmarked": sum(1 for s in ss if not s.get("status")),
             "treat": treat_totals(s for s in ss if s.get("status") == 1),
+            # the same day as the booking sheet shows it: red = cancelled, anything else = came
+            "sheet": {
+                "sessions": sum(s.get("units", 1) for s in ss if s.get("sheet") != "red"),
+                "cases": sum(1 for s in ss if s.get("sheet") != "red"),
+                "cancelled": sum(1 for s in ss if s.get("sheet") == "red"),
+                "treat": treat_totals(s for s in ss if s.get("sheet") != "red"),
+            },
         }
-    return out
-
-
-# Treatment codes in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each. Same list as store.js.
-TREATMENTS = {
-    "mt": "MT", "es": "ES", "us": "US", "ex": "EX", "laser": "Laser", "scanner laser": "Laser", "shockwave": "Shockwave",
-    "shock": "Shockwave", "hot mgt": "Hot pack / Magnet", "hotmgt": "Hot pack / Magnet", "mgt": "Hot pack / Magnet",
-    "hotpak": "Hot pack / Magnet", "hot pack": "Hot pack / Magnet", "balance": "Balance", "gait": "Gait", "pb": "PB",
-    "schroth": "Schroth", "scroth": "Schroth", "shroth": "Schroth", "aq": "Aqua", "ot": "OT", "mld": "MLD",
-    "bandage": "Bandaging", "bandaging": "Bandaging", "comp": "Compression", "pressure": "Compression",
-    "lymph press": "Compression", "chest": "Chest", "tilt": "Tilt table", "thera": "Thera", "wb": "WB",
-    "standing": "Standing", "biofeedback": "Biofeedback", "biofeed back": "Biofeedback", "bladder": "Bladder rehab",
-    "speech": "Speech", "release": "Release", "bibatron": "Bibatron", "tecar": "Tecar", "traction": "Traction",
-}
-
-
-def treatments_of(details):
-    out = {}
-    for part in re.split(r"[+·,/\n]", str(details or "").lower()):
-        times = 2 if re.search(r"[*x×]\s*2|2\s*[*x×]", part) else 1
-        key = re.sub(r"[*x×]?\s*\d+|\d+\s*[*x×]", "", part).strip(" *\"'\t")
-        name = TREATMENTS.get(key)
-        if name:
-            out[name] = out.get(name, 0) + times
     return out
 
 

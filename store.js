@@ -1,8 +1,8 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=12";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=13";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
-// Keep in step with TREATMENTS in importer/run_import.py.
+// Keep in step with importer/codes.py (same list, same rules).
 const TREATMENTS = {
   mt: "MT", es: "ES", us: "US", ex: "EX", laser: "Laser", "scanner laser": "Laser", shockwave: "Shockwave", shock: "Shockwave",
   "hot mgt": "Hot pack / Magnet", hotmgt: "Hot pack / Magnet", mgt: "Hot pack / Magnet", hotpak: "Hot pack / Magnet", "hot pack": "Hot pack / Magnet",
@@ -15,31 +15,40 @@ const TREATMENTS = {
 export function treatmentsOf(details) {
   const out = {};
   for (const part of String(details || "").toLowerCase().split(/[+·,/\n]/)) {
-    const times = /[*x×]\s*2|2\s*[*x×]/.test(part) ? 2 : 1;
+    const times = /[*x×]\s*2|2\s*[*x×]|^\s*2\s*[a-z]|[a-z]\s*2\s*$/.test(part) ? 2 : 1;   // mt*2, mtx2, 2mt, mt2
     const key = part.replace(/[*x×]?\s*\d+|\d+\s*[*x×]/g, "").replace(/^[\s*"']+|[\s*"']+$/g, "");
     const name = TREATMENTS[key];
     if (name) out[name] = (out[name] || 0) + times;
   }
   return out;
 }
+const addTreat = (into, sessions) => {
+  for (const s of sessions) for (const [t, n] of Object.entries(treatmentsOf(s.details))) into[t] = (into[t] || 0) + n;
+  return into;
+};
 
+// Two views of one day: what the doctors marked, and what the booking sheet shows (red = cancelled).
 export function summarize(day) {
   const out = {};
   for (const [key, d] of Object.entries(day.doctors || {})) {
     const ss = d.sessions || [];
-    const treat = {};
-    for (const s of ss.filter(s => s.status === 1))
-      for (const [t, n] of Object.entries(treatmentsOf(s.details))) treat[t] = (treat[t] || 0) + n;
+    const came = ss.filter(s => s.status === 1), sheetCame = ss.filter(s => s.sheet !== "red");
     out[key] = {
       name: d.name,
       section: d.section || "",
       submitted: !!d.submitted,
       booked: ss.reduce((a, s) => a + (s.units || 1), 0),
-      attended: ss.filter(s => s.status === 1).reduce((a, s) => a + (s.units || 1), 0),
-      cases: ss.filter(s => s.status === 1).length,
+      attended: came.reduce((a, s) => a + (s.units || 1), 0),
+      cases: came.length,
       noShow: ss.filter(s => s.status === 2).length,
       unmarked: ss.filter(s => !s.status).length,
-      treat,
+      treat: addTreat({}, came),
+      sheet: {
+        sessions: sheetCame.reduce((a, s) => a + (s.units || 1), 0),
+        cases: sheetCame.length,
+        cancelled: ss.filter(s => s.sheet === "red").length,
+        treat: addTreat({}, sheetCame),
+      },
     };
   }
   return out;

@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=12";
-import { ADMIN_EMAIL } from "./config.js?v=12";
+import { createStore } from "./store.js?v=13";
+import { ADMIN_EMAIL } from "./config.js?v=13";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -22,6 +22,7 @@ const state = {
   settings: { depts: {}, assign: {} }, dept: "all",
   dayPick: "today", override: false,   // override = admin opened another date
   charts: [], metric: ls.get("metric", "sessions"), unsubStats: null,
+  source: ls.get("source", "doctors"),   // reports from the doctors' marks or from the booking sheet
   rep: { preset: "month", from: "", to: "", dept: "all", sort: "sessions", dir: -1 },   // reports filters
   cmpA: { preset: "month", from: "", to: "" }, cmpB: { preset: "last", from: "", to: "" },
 };
@@ -208,7 +209,7 @@ function counts(doc) {
 function sessHTML(doc, s, top, height) {
   const style = top == null ? "" : `style="top:${top}px;height:${height}px"`;
   const locked = canEdit(doc) ? "" : " locked";
-  const two = s.units > 1 ? `<span class="x2" title="أكتر من ساعة وربع = جلستين">×2</span>` : "";
+  const two = s.units > 1 ? `<span class="x2" title="الخانة دي بتتحسب ${s.units} جلسات">×${s.units}</span>` : "";
   return `<button class="sess s${s.status || 0}${locked}" data-key="${esc(doc.key)}" data-id="${esc(s.id)}" ${style}
     title="${esc(s.patient)} — ${esc(s.details)}">
     <span class="mark" aria-hidden="true"></span>${two}<span class="p">${esc(s.patient)}</span>
@@ -285,7 +286,7 @@ function renderToday() {
         <span><i class="sw"></i>لسه</span>
         <span><i class="sw g"></i>دوسة = حضر</span>
         <span><i class="sw r"></i>دوستين = محضرش</span>
-        <span><b style="font-size:11px;background:var(--text);color:var(--surface);border-radius:6px;padding:0 5px">×2</b> أكتر من ساعة وربع</span>
+        <span><b style="font-size:11px;background:var(--text);color:var(--surface);border-radius:6px;padding:0 5px">×2</b> بتتحسب أكتر من جلسة</span>
       </div>
     </div>
     ${mine ? mineHTML(mine) : gridHTML(visible)}`;
@@ -452,7 +453,12 @@ function rowsIn(range) {
   for (const s of state.stats) {
     if (s.date < range.from || s.date > range.to) continue;
     for (const d of Object.values(s.doctors || {})) {
-      rows.push({
+      const sh = d.sheet || {};
+      rows.push(state.source === "sheet" ? {
+        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d),
+        sessions: sh.sessions || 0, cases: sh.cases || 0, noShow: sh.cancelled || 0,
+        booked: d.booked || 0, unmarked: 0, treat: sh.treat || {},
+      } : {
         date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d),
         sessions: d.attended || 0, cases: d.cases ?? d.attended ?? 0, noShow: d.noShow || 0,
         booked: d.booked || 0, unmarked: d.unmarked || 0, treat: d.treat || {},
@@ -512,12 +518,19 @@ function deptSelectBar() {
     <option value="all">كل الأقسام</option>${names.map(n => `<option value="${esc(n)}" ${state.rep.dept === n ? "selected" : ""}>${esc(n)}</option>`).join("")}
   </select></label>`;
 }
+const SOURCES = { doctors: "حسب الدكاترة", sheet: "حسب الجدول" };
+const sourceNote = () => state.source === "sheet"
+  ? "الأرقام من ألوان شيت السكرتارية: الأحمر = كنسل، وأي لون تاني = حضر."
+  : "الأرقام من علامات الدكاترة: الأخضر = حضر، الأحمر = كنسل، والأبيض مش متحسوب.";
 function metricChips() {
-  return `<div class="chips">${Object.entries(METRICS).map(([k, m]) =>
-    `<button class="chip ${state.metric === k ? "active" : ""}" data-metric="${k}">${m.many}</button>`).join("")}</div>`;
+  return `<div class="chips source">${Object.entries(SOURCES).map(([k, l]) =>
+      `<button class="chip ${state.source === k ? "active" : ""}" data-source="${k}">${l}</button>`).join("")}</div>
+    <div class="chips">${Object.entries(METRICS).map(([k, m]) =>
+      `<button class="chip ${state.metric === k ? "active" : ""}" data-metric="${k}">${m.many}</button>`).join("")}</div>`;
 }
 function bindCommon(el, rerender) {
   el.querySelectorAll("[data-metric]").forEach(b => b.onclick = () => { state.metric = b.dataset.metric; ls.set("metric", state.metric); rerender(); });
+  el.querySelectorAll("[data-source]").forEach(b => b.onclick = () => { state.source = b.dataset.source; ls.set("source", state.source); rerender(); });
   const ds = el.querySelector("[data-dept-filter]");
   if (ds) ds.onchange = () => { state.rep.dept = ds.value; rerender(); };
 }
@@ -534,9 +547,9 @@ function renderStats() {
   const all = rowsIn(range);
   const rows = all.filter(inDept);
   const A = agg(rows);
-  const head = `<div class="toolbar"><div class="day-title"><h2>الإحصائيات</h2><div class="sub">${rangeLabel(range)}${state.rep.dept !== "all" ? " · " + esc(state.rep.dept) : ""}</div></div>
+  const head = `<div class="toolbar"><div class="day-title"><h2>الإحصائيات</h2><div class="sub">${rangeLabel(range)}${state.rep.dept !== "all" ? " · " + esc(state.rep.dept) : ""} · <b>${SOURCES[state.source]}</b></div></div>
       <div class="spacer"></div><button class="ghost" id="csvBtn">⬇ Excel</button><button class="danger" id="delBtn">🗑 مسح داتا</button></div>
-    <div class="card filters">${periodPicker("s", state.rep)}<div class="filter-row">${deptSelectBar()}${metricChips()}</div></div>`;
+    <div class="card filters">${periodPicker("s", state.rep)}<div class="filter-row">${deptSelectBar()}${metricChips()}</div><p class="hint">${sourceNote()}</p></div>`;
   if (!rows.length) {
     el.innerHTML = head + noData("مفيش أرقام في الفترة دي");
     bindPeriod(el, "s", state.rep, renderStats); bindCommon(el, renderStats);
@@ -562,8 +575,8 @@ function renderStats() {
   el.innerHTML = head + `
     <div class="kpis">
       <div class="card kpi"><div class="k">الجلسات اللي اتعملت</div><div class="v">${fmtN(A.sessions)}</div><div class="s">${fmtN(A.sessions / Math.max(1, A.nDays))} في اليوم · ${A.nDays} يوم</div></div>
-      <div class="card kpi"><div class="k">الحالات (المرضى اللي حضروا)</div><div class="v">${fmtN(A.cases)}</div><div class="s">${fmtN(A.sessions - A.cases)} جلسة اتحسبت جلستين</div></div>
-      <div class="card kpi bad"><div class="k">محضرش (كنسل)</div><div class="v">${fmtN(A.noShow)}</div><div class="s">${fmtP(A.rate)} من الحالات</div></div>
+      <div class="card kpi"><div class="k">الحالات (المرضى اللي حضروا)</div><div class="v">${fmtN(A.cases)}</div><div class="s">${fmtN(A.sessions - A.cases)} جلسة زيادة (ex/balance/pb/wb/gait أو mt2)</div></div>
+      <div class="card kpi bad"><div class="k">${state.source === "sheet" ? "كنسل (أحمر في الجدول)" : "محضرش (كنسل)"}</div><div class="v">${fmtN(A.noShow)}</div><div class="s">${fmtP(A.rate)} من الحالات</div></div>
       <div class="card kpi"><div class="k">العلاجات</div><div class="v">${fmtN(A.treatTotal)}</div><div class="s">${A.treatTypes} نوع · أكتر واحد ${esc(A.topTreat)}</div></div>
       <div class="card kpi"><div class="k">الدكاترة</div><div class="v">${A.doctors}</div><div class="s">${fmtN(valOf(A) / Math.max(1, A.doctors))} ${M.one} للدكتور</div></div>
     </div>
@@ -715,7 +728,7 @@ function renderAnalysis() {
     <div class="card filters">
       <div class="cmp-head"><span class="tag a">الفترة الأولى</span>${periodPicker("a", state.cmpA)}</div>
       <div class="cmp-head"><span class="tag b">الفترة التانية</span>${periodPicker("b", state.cmpB)}</div>
-      <div class="filter-row">${deptSelectBar()}${metricChips()}</div>
+      <div class="filter-row">${deptSelectBar()}${metricChips()}</div><p class="hint">${sourceNote()}</p>
     </div>
     ${!rowsA.length && !rowsB.length ? noData("مفيش أرقام في الفترتين دول") : `
     <section class="card block">
