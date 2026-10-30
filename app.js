@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=13";
-import { ADMIN_EMAIL } from "./config.js?v=13";
+import { createStore } from "./store.js?v=15";
+import { ADMIN_EMAIL } from "./config.js?v=15";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -119,9 +119,13 @@ function bindDayTabs(el) {
 const PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
 // only the departments the admin chose; a doctor not put in one yet is "بدون قسم"
 const NO_DEPT = "بدون قسم";
+// Outpatient = the admin's department whose name has "out" in it (Outpatient / outpatient / Out patient)
+const isOutDept = name => /out/i.test(name || "");
+const outDept = () => Object.keys(state.settings.depts || {}).find(isOutDept) || "Outpatient";
 const deptOf = d => {
   const dep = (state.settings.assign || {})[idName(d.name)];
-  return dep && (state.settings.depts || {})[dep] ? dep : NO_DEPT;
+  if (dep && (state.settings.depts || {})[dep]) return dep;
+  return d.sub ? outDept() : NO_DEPT;      // a Neuro / Ortho doctor not put in a department yet still counts as Outpatient
 };
 const deptColor = name => (state.settings.depts || {})[name] || "";
 const dcStyle = name => deptColor(name) ? `style="--dc:${deptColor(name)}"` : "";
@@ -455,11 +459,11 @@ function rowsIn(range) {
     for (const d of Object.values(s.doctors || {})) {
       const sh = d.sheet || {};
       rows.push(state.source === "sheet" ? {
-        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d),
+        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? d.sub || "" : "",
         sessions: sh.sessions || 0, cases: sh.cases || 0, noShow: sh.cancelled || 0,
         booked: d.booked || 0, unmarked: 0, treat: sh.treat || {},
       } : {
-        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d),
+        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? d.sub || "" : "",
         sessions: d.attended || 0, cases: d.cases ?? d.attended ?? 0, noShow: d.noShow || 0,
         booked: d.booked || 0, unmarked: d.unmarked || 0, treat: d.treat || {},
       });
@@ -511,13 +515,32 @@ function bindPeriod(el, prefix, sel, rerender) {
   if (f) f.onchange = onDate;
   if (t) t.onchange = onDate;
 }
+const SUB_LABEL = { Neuro: "Neuro", Ortho: "Ortho" };
 function deptSelectBar() {
-  const names = [...new Set(state.stats.flatMap(s => Object.values(s.doctors || {}).map(deptOf)))].sort();
-  if (state.rep.dept !== "all" && !names.includes(state.rep.dept)) state.rep.dept = "all";
+  const opts = new Map();
+  for (const st of state.stats) for (const d of Object.values(st.doctors || {})) {
+    const dep = deptOf(d);
+    opts.set(dep, dep);
+    if (d.sub && isOutDept(dep)) opts.set(dep + "::" + d.sub, `${dep} · ${SUB_LABEL[d.sub] || d.sub}`);
+  }
+  const keys = [...opts.keys()].sort();
+  if (state.rep.dept !== "all" && !opts.has(state.rep.dept)) state.rep.dept = "all";
   return `<label class="field">القسم <select data-dept-filter>
-    <option value="all">كل الأقسام</option>${names.map(n => `<option value="${esc(n)}" ${state.rep.dept === n ? "selected" : ""}>${esc(n)}</option>`).join("")}
+    <option value="all">كل الأقسام</option>${keys.map(k => `<option value="${esc(k)}" ${state.rep.dept === k ? "selected" : ""}>${esc(opts.get(k))}</option>`).join("")}
   </select></label>`;
 }
+// department rows, each followed by its Neuro / Ortho rows when it has them
+function deptRowsWithSubs(rows) {
+  const out = [];
+  for (const [k, v] of groupBy(rows, r => r.dept)) {
+    out.push({ k, label: k, a: agg(v), rows: v, isSub: false });
+    const subs = [...groupBy(v.filter(r => r.sub), r => r.sub)].sort((x, y) => x[0].localeCompare(y[0]));
+    if (subs.length) out[out.length - 1].subs = subs.map(([sb, sv]) => ({ k: k + "::" + sb, label: SUB_LABEL[sb] || sb, a: agg(sv), rows: sv, isSub: true }));
+  }
+  out.sort((x, y) => valOf(y.a) - valOf(x.a));
+  return out.flatMap(d => [d, ...(d.subs || [])]);
+}
+const subCell = (dept, sub) => deptCell(dept) + (sub ? ` <span class="subtag">${esc(SUB_LABEL[sub] || sub)}</span>` : "");
 const SOURCES = { doctors: "حسب الدكاترة", sheet: "حسب الجدول" };
 const sourceNote = () => state.source === "sheet"
   ? "الأرقام من ألوان شيت السكرتارية: الأحمر = كنسل، وأي لون تاني = حضر."
@@ -534,7 +557,11 @@ function bindCommon(el, rerender) {
   const ds = el.querySelector("[data-dept-filter]");
   if (ds) ds.onchange = () => { state.rep.dept = ds.value; rerender(); };
 }
-const inDept = r => state.rep.dept === "all" || r.dept === state.rep.dept;
+const inDept = r => {
+  if (state.rep.dept === "all") return true;
+  const [dep, sub] = state.rep.dept.split("::");
+  return r.dept === dep && (!sub || r.sub === sub);
+};
 const adminOnly = el => { el.innerHTML = `<div class="empty"><div class="big">🔒</div><h2>الصفحة دي للأدمن بس</h2></div>`; };
 const noData = msg => `<div class="empty"><div class="big">📊</div><h2>${msg}</h2><p>الأرقام بتيجي من الأيام المقفولة (بعد ما الدكاترة يعملوا Submit أو اليوم يتقفل الساعة 12 بالليل).</p></div>`;
 
@@ -547,7 +574,7 @@ function renderStats() {
   const all = rowsIn(range);
   const rows = all.filter(inDept);
   const A = agg(rows);
-  const head = `<div class="toolbar"><div class="day-title"><h2>الإحصائيات</h2><div class="sub">${rangeLabel(range)}${state.rep.dept !== "all" ? " · " + esc(state.rep.dept) : ""} · <b>${SOURCES[state.source]}</b></div></div>
+  const head = `<div class="toolbar"><div class="day-title"><h2>الإحصائيات</h2><div class="sub">${rangeLabel(range)}${state.rep.dept !== "all" ? " · " + esc(state.rep.dept.replace("::", " · ")) : ""} · <b>${SOURCES[state.source]}</b></div></div>
       <div class="spacer"></div><button class="ghost" id="csvBtn">⬇ Excel</button><button class="danger" id="delBtn">🗑 مسح داتا</button></div>
     <div class="card filters">${periodPicker("s", state.rep)}<div class="filter-row">${deptSelectBar()}${metricChips()}</div><p class="hint">${sourceNote()}</p></div>`;
   if (!rows.length) {
@@ -559,15 +586,16 @@ function renderStats() {
 
   // departments (all of them, so the selected one can be compared with the rest)
   const byDept = [...groupBy(all, r => r.dept)].map(([k, v]) => ({ k, a: agg(v) })).sort((x, y) => valOf(y.a) - valOf(x.a));
+  const deptTable = deptRowsWithSubs(all);
   const allA = agg(all);
   // doctors
-  const docs = [...groupBy(rows, r => r.id)].map(([id, v]) => ({ id, name: v[v.length - 1].name, dept: v[v.length - 1].dept, a: agg(v) }));
+  const docs = [...groupBy(rows, r => r.id)].map(([id, v]) => ({ id, name: v[v.length - 1].name, dept: v[v.length - 1].dept, sub: v[v.length - 1].sub, a: agg(v) }));
   const sortKey = { name: d => d.name.toLowerCase(), dept: d => d.dept, days: d => d.a.nDays, sessions: d => d.a.sessions, cases: d => d.a.cases,
     noShow: d => d.a.noShow, rate: d => d.a.rate, treat: d => d.a.treatTotal, perDay: d => d.a.perDay }[state.rep.sort] || (d => d.a.sessions);
   docs.sort((x, y) => { const a = sortKey(x), b = sortKey(y); return (a > b ? 1 : a < b ? -1 : 0) * state.rep.dir; });
   // treatments by department
   const treatNames = Object.entries(A.treat).sort((x, y) => y[1] - x[1]).map(x => x[0]);
-  const tDepts = state.rep.dept === "all" ? byDept.map(d => d.k) : [state.rep.dept];
+  const tDepts = state.rep.dept === "all" ? byDept.map(d => d.k) : [state.rep.dept.split("::")[0]];
   // day by day
   const dates = [...A.days].sort();
 
@@ -585,8 +613,8 @@ function renderStats() {
       <h3>الأقسام</h3><p class="hint">دوس على قسم عشان تشوف دكاترته وعلاجاته بس.</p>
       <div class="table-wrap"><table class="stats rep">
         <thead><tr><th class="nm">القسم</th><th>الدكاترة</th><th>الجلسات</th><th>الحالات</th><th>محضرش</th><th>نسبة الكنسل</th><th>العلاجات</th><th>أنواع العلاج</th><th>أكتر علاج</th><th>${M.many} / يوم</th></tr></thead>
-        <tbody>${byDept.map(({ k, a }) => `<tr class="click ${state.rep.dept === k ? "picked" : ""}" data-pick-dept="${esc(k)}">
-          <td class="nm">${deptCell(k)}</td><td>${a.doctors}</td><td><b>${fmtN(a.sessions)}</b></td><td>${fmtN(a.cases)}</td><td class="ns">${fmtN(a.noShow)}</td>
+        <tbody>${deptTable.map(({ k, label, a, isSub }) => `<tr class="click ${isSub ? "subrow" : ""} ${state.rep.dept === k ? "picked" : ""}" data-pick-dept="${esc(k)}">
+          <td class="nm">${isSub ? `<span class="subtag">${esc(label)}</span>` : deptCell(k)}</td><td>${a.doctors}</td><td><b>${fmtN(a.sessions)}</b></td><td>${fmtN(a.cases)}</td><td class="ns">${fmtN(a.noShow)}</td>
           <td>${fmtP(a.rate)}</td><td>${fmtN(a.treatTotal)}</td><td>${a.treatTypes}</td><td>${esc(a.topTreat)}</td><td>${fmtN(a.perDay)}</td></tr>`).join("")}</tbody>
         <tfoot><tr><td class="nm">كل الأقسام</td><td>${allA.doctors}</td><td>${fmtN(allA.sessions)}</td><td>${fmtN(allA.cases)}</td><td class="ns">${fmtN(allA.noShow)}</td>
           <td>${fmtP(allA.rate)}</td><td>${fmtN(allA.treatTotal)}</td><td>${allA.treatTypes}</td><td>${esc(allA.topTreat)}</td><td>${fmtN(allA.perDay)}</td></tr></tfoot>
@@ -597,7 +625,7 @@ function renderStats() {
       <h3>الدكاترة</h3><p class="hint">دوس على عنوان أي عمود عشان ترتّب بيه، ودوس على اسم الدكتور عشان تشوف تفاصيله.</p>
       <div class="table-wrap"><table class="stats rep">
         <thead><tr>${th("name", "الدكتور")}${th("dept", "القسم")}${th("days", "أيام")}${th("sessions", "الجلسات")}${th("cases", "الحالات")}${th("noShow", "محضرش")}${th("rate", "نسبة الكنسل")}${th("treat", "العلاجات")}${th("perDay", M.many + " / يوم")}</tr></thead>
-        <tbody>${docs.map(d => `<tr><td class="nm"><button class="link" data-doc="${esc(d.id)}">${esc(d.name)}</button></td><td>${deptCell(d.dept)}</td>
+        <tbody>${docs.map(d => `<tr><td class="nm"><button class="link" data-doc="${esc(d.id)}">${esc(d.name)}</button></td><td>${subCell(d.dept, d.sub)}</td>
           <td>${d.a.nDays}</td><td><b>${fmtN(d.a.sessions)}</b></td><td>${fmtN(d.a.cases)}</td><td class="ns">${fmtN(d.a.noShow)}</td>
           <td class="${d.a.rate > A.rate ? "hi" : ""}">${fmtP(d.a.rate)}</td><td>${fmtN(d.a.treatTotal)}</td><td>${(Math.round(d.a.perDay * 10) / 10).toFixed(1)}</td></tr>`).join("")}</tbody>
       </table></div>
@@ -713,15 +741,20 @@ function renderAnalysis() {
     ["الجلسات", A.sessions, B.sessions, false], ["الحالات", A.cases, B.cases, false], ["محضرش (كنسل)", A.noShow, B.noShow, true],
     ["العلاجات", A.treatTotal, B.treatTotal, false], ["الدكاترة", A.doctors, B.doctors, false], ["أيام الشغل", A.nDays, B.nDays, false],
   ];
-  const deptsA = groupBy(rowsA, r => r.dept), deptsB = groupBy(rowsB, r => r.dept);
+  const keyOf = r => [r.dept, r.sub ? r.dept + "::" + r.sub : null];
+  const deptsA = new Map(), deptsB = new Map();
+  for (const [m, rows] of [[deptsA, rowsA], [deptsB, rowsB]])
+    for (const r of rows) for (const k of keyOf(r)) if (k) { if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
   const deptNames = [...new Set([...deptsA.keys(), ...deptsB.keys()])];
-  const dRows = deptNames.map(k => ({ k, a: agg(deptsA.get(k) || []), b: agg(deptsB.get(k) || []) })).sort((x, y) => valOf(y.a) - valOf(x.a));
+  const dAll = deptNames.map(k => ({ k, a: agg(deptsA.get(k) || []), b: agg(deptsB.get(k) || []) }));
+  const dRows = dAll.filter(d => !d.k.includes("::")).sort((x, y) => valOf(y.a) - valOf(x.a))
+    .flatMap(d => [d, ...dAll.filter(x => x.k.startsWith(d.k + "::")).sort((x, y) => x.k.localeCompare(y.k))]);
   const docsA = groupBy(rowsA, r => r.id), docsB = groupBy(rowsB, r => r.id);
   const docIds = [...new Set([...docsA.keys(), ...docsB.keys()])];
   const docRows = docIds.map(id => {
     const va = docsA.get(id) || [], vb = docsB.get(id) || [];
     const last = (va[va.length - 1] || vb[vb.length - 1]);
-    return { id, name: last.name, dept: last.dept, a: agg(va), b: agg(vb) };
+    return { id, name: last.name, dept: last.dept, sub: last.sub, a: agg(va), b: agg(vb) };
   }).sort((x, y) => (valOf(y.a) - valOf(y.b)) - (valOf(x.a) - valOf(x.b)));
 
   el.innerHTML = `<div class="toolbar"><div class="day-title"><h2>المقارنة والرسوم</h2><div class="sub">قارن أي فترتين: شهر بشهر، أسبوع بأسبوع، أو تواريخ تختارها</div></div></div>
@@ -750,7 +783,7 @@ function renderAnalysis() {
       <h3>الأقسام</h3>
       <div class="table-wrap"><table class="stats rep">
         <thead><tr><th class="nm">القسم</th><th>${M.many} الأولى</th><th>${M.many} التانية</th><th>الفرق</th><th>كنسل الأولى</th><th>كنسل التانية</th><th>العلاجات الأولى</th><th>العلاجات التانية</th></tr></thead>
-        <tbody>${dRows.map(({ k, a, b }) => `<tr><td class="nm">${deptCell(k)}</td><td><b>${fmtN(valOf(a))}</b></td><td>${fmtN(valOf(b))}</td><td>${delta(valOf(a), valOf(b))}</td>
+        <tbody>${dRows.map(({ k, a, b }) => `<tr class="${k.includes("::") ? "subrow" : ""}"><td class="nm">${k.includes("::") ? `<span class="subtag">${esc(SUB_LABEL[k.split("::")[1]] || k.split("::")[1])}</span>` : deptCell(k)}</td><td><b>${fmtN(valOf(a))}</b></td><td>${fmtN(valOf(b))}</td><td>${delta(valOf(a), valOf(b))}</td>
           <td>${fmtP(a.rate)}</td><td>${fmtP(b.rate)}</td><td>${fmtN(a.treatTotal)}</td><td>${fmtN(b.treatTotal)}</td></tr>`).join("")}</tbody>
       </table></div>
     </section>
@@ -759,7 +792,7 @@ function renderAnalysis() {
       <h3>الدكاترة: مين زاد ومين قلّ</h3>
       <div class="table-wrap"><table class="stats rep">
         <thead><tr><th class="nm">الدكتور</th><th>القسم</th><th>${M.many} الأولى</th><th>${M.many} التانية</th><th>الفرق</th><th>نسبة الكنسل الأولى</th><th>التانية</th></tr></thead>
-        <tbody>${docRows.map(d => `<tr><td class="nm">${esc(d.name)}</td><td>${deptCell(d.dept)}</td><td><b>${fmtN(valOf(d.a))}</b></td><td>${fmtN(valOf(d.b))}</td>
+        <tbody>${docRows.map(d => `<tr><td class="nm">${esc(d.name)}</td><td>${subCell(d.dept, d.sub)}</td><td><b>${fmtN(valOf(d.a))}</b></td><td>${fmtN(valOf(d.b))}</td>
           <td>${valOf(d.a) - valOf(d.b) > 0 ? "+" : ""}${fmtN(valOf(d.a) - valOf(d.b))} ${delta(valOf(d.a), valOf(d.b))}</td><td>${fmtP(d.a.rate)}</td><td>${fmtP(d.b.rate)}</td></tr>`).join("")}</tbody>
       </table></div>
     </section>

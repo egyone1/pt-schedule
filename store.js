@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=13";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=15";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
 // Keep in step with importer/codes.py (same list, same rules).
@@ -36,6 +36,7 @@ export function summarize(day) {
     out[key] = {
       name: d.name,
       section: d.section || "",
+      sub: d.sub || "",
       submitted: !!d.submitted,
       booked: ss.reduce((a, s) => a + (s.units || 1), 0),
       attended: came.reduce((a, s) => a + (s.units || 1), 0),

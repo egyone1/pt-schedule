@@ -321,3 +321,8 @@ table.mini td:first-child { text-align: right; }
 .treat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .treat-chips span { background: var(--surface-2); border: 1px solid var(--line); border-radius: 99px; padding: 1px 10px; font-size: 12.5px; direction: ltr; }
 dialog { width: min(560px, 94vw); max-height: 88vh; overflow: auto; }
+
+/* Outpatient groups (Neuro / Ortho) */
+.subtag { display: inline-block; font-size: 11.5px; font-weight: 600; color: var(--brand); background: var(--brand-soft); border-radius: 99px; padding: 0 8px; line-height: 20px; direction: ltr; }
+table.rep tr.subrow td { background: var(--surface-2); font-size: 13px; }
+table.rep tr.subrow td.nm { padding-inline-start: 34px; }

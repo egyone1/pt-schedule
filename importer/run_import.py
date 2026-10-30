@@ -84,6 +84,7 @@ def summarize(day):
         out[key] = {
             "name": d["name"],
             "section": d.get("section", ""),
+            "sub": d.get("sub", ""),
             "submitted": bool(d.get("submitted")),
             "booked": sum(s.get("units", 1) for s in ss),
             "attended": sum(s.get("units", 1) for s in ss if s.get("status") == 1),
@@ -166,6 +167,27 @@ def _safe(fn):
         return None
 
 
+def remember_subs(db, doctors):
+    """Some Saturday tabs don't show where Neuro ends and Ortho starts. Remember each doctor's usual
+    group (private/subs) and use it for a doctor left without one."""
+    memo = _safe(lambda: db.get("private/subs")) or {}
+    counts = memo.get("counts", {})
+    two_groups = any(d.get("sub") == "Ortho" for d in doctors) and any(d.get("sub") == "Neuro" for d in doctors)
+    for d in doctors:
+        if two_groups and d.get("sub"):         # learn only from days that clearly show both groups
+            c = counts.setdefault(d["name"], {})
+            c[d["sub"]] = c.get(d["sub"], 0) + 1
+    # a day showing only one group (Fridays) can't tell Neuro from Ortho either: use the usual group
+    one_group = not two_groups
+    for d in doctors:
+        known = counts.get(d["name"])
+        if not known or d.get("section", "").lower() in ("inpatient", "ot", "lym"):
+            continue
+        if not d.get("sub") or one_group:
+            d["sub"] = max(known, key=known.get)
+    _safe(lambda: db.set("private/subs", {"counts": counts}))
+
+
 def close_day(db, date, doc):
     db.set("stats/" + date, {"date": date, "doctors": summarize(doc), "autoClosed": True})
     db.update("days/" + date, {"status": "closed", "autoClosed": True,
@@ -228,6 +250,7 @@ def main():
     if not parsed or not parsed["doctors"]:
         print("no tab for %s in the workbook - nothing imported" % day)
         return
+    remember_subs(db, parsed["doctors"])
 
     if mode != "open":
         # re-read right before writing: the download + parse above takes over a minute and

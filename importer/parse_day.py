@@ -85,6 +85,45 @@ def time_of(v):
     return None
 
 
+def outpatient_subs(ws, time_cols, max_col):
+    """Outpatient is two groups of doctors with a time column between them: Neuro first, then Ortho
+    (that column often says "Ortho" in row 2). Saturday tabs have no "Outpatient" label - then the
+    area starts after the Aqua doctors. Returns {column: "Neuro" | "Ortho"}; unclear columns are left out."""
+    labels = {}
+    for c in range(1, max_col + 1):
+        v = ws.cell(1, c).value
+        if isinstance(v, str) and v.strip() and v.strip().lower() not in ("eman", "habiba"):
+            labels[c] = v.strip().split("\t")[0].strip().lower()
+    nxt = lambda after: min([c for c in labels if c > after], default=max_col + 1)
+    is_doc = lambda c: c not in time_cols and isinstance(ws.cell(3, c).value, str) and bool(clean_name(ws.cell(3, c).value))
+    op = next((c for c, l in labels.items() if l == "outpatient"), None)
+    aqua = next((c for c, l in labels.items() if l == "aqua"), None)
+    if op:
+        start, end = op, nxt(op)
+    elif aqua:
+        end, start, seen = nxt(aqua), None, False
+        for c in range(aqua + 1, end):          # skip the Aqua doctors up to the first gap
+            if is_doc(c):
+                seen = True
+            elif seen:
+                start = c
+                break
+        if start is None:
+            return {}
+    else:
+        return {}
+    subs, group, seen = {}, 1, False
+    for c in range(start, end):
+        row2 = str(ws.cell(2, c).value or "").strip().lower()
+        if not is_doc(c):
+            if seen or "ortho" in row2:
+                group = 2
+            continue
+        seen = True
+        subs[c] = "Neuro" if group == 1 else "Ortho"
+    return subs
+
+
 def parse_day(path_or_wb, day):
     wb = path_or_wb if hasattr(path_or_wb, "worksheets") else openpyxl.load_workbook(path_or_wb)
     ws = find_sheet(wb, day)
@@ -121,6 +160,7 @@ def parse_day(path_or_wb, day):
             cur = v.strip()
             cur = cur.upper() if len(cur) <= 3 else cur[0].upper() + cur[1:]
         sections[c] = cur
+    subs = outpatient_subs(ws, time_cols, max_col)
 
     merged = {}
     covered = set()
@@ -170,6 +210,7 @@ def parse_day(path_or_wb, day):
                 "key": re.sub(r"[^a-z0-9]+", "_", clean_name(head).lower()).strip("_") + "_c%d" % c,
                 "name": clean_name(head),
                 "section": sections.get(c, ""),
+                "sub": subs.get(c, ""),          # Outpatient: "Neuro" (first group) or "Ortho" (after the separator)
                 "order": c,
                 "submitted": False,
                 "sessions": sessions,
