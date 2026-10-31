@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=19";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=20";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
 // Keep in step with importer/codes.py (same list, same rules).
@@ -94,7 +94,7 @@ async function firebaseStore() {
     saveSource: url => fs.setDoc(fs.doc(db, "private", "source"), { shareUrl: url, changedAt: nowIso() }, { merge: true }),
     async setSessions(date, key, sessions, dayClosed) {
       await fs.updateDoc(dayRef(date), { [`doctors.${key}.sessions`]: sessions, updatedAt: nowIso() });
-      if (dayClosed) await this._restat(date);         // totals only change once the day is closed
+      if (dayClosed) await this._restat(date);         // totals change once the day is closed or after the 9 PM read
     },
     async setSubmitted(date, key, value) {
       // returns true when this submit closed the day
@@ -108,7 +108,7 @@ async function firebaseStore() {
         if (value && day.status === "open" && allSubmitted(day)) {
           patch.status = "closed"; patch.closedAt = nowIso(); closed = true;
         }
-        if (closed || day.status === "closed")
+        if (closed || day.status === "closed" || day.finalAt)      // after the 9 PM read the day is in the statistics
           tx.set(fs.doc(db, "stats", date), { date, doctors: summarize(day) });
         tx.update(dayRef(date), patch);
         return closed;
@@ -132,7 +132,7 @@ async function firebaseStore() {
     async _restat(date) {
       const snap = await fs.getDoc(dayRef(date));
       const day = snap.data();
-      if (day && day.status === "closed")
+      if (day && (day.status === "closed" || day.finalAt))
         await fs.setDoc(fs.doc(db, "stats", date), { date, doctors: summarize(day) });
     },
   };

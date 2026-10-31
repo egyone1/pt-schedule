@@ -280,7 +280,9 @@ def main():
     elif live.get("status") == "open" and all(d.get("submitted") for d in doctors.values()):
         live["status"] = "closed"; live["closedAt"] = stamp
     db.set("days/" + date, live)
-    if live["status"] == "closed":
+    if live["status"] == "closed" or mode == "final":
+        # 9 PM is the final schedule: the day counts in the statistics from now on (the user wants the
+        # sheet numbers right away); doctors' marks after 9 PM keep updating it until the day closes
         db.set("stats/" + date, {"date": date, "doctors": summarize(live)})
     print("%s for %s: %d doctors, changed: %s" % (mode, date, len(doctors), ", ".join(changed) or "none"))
 

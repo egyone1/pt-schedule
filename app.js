@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=19";
-import { ADMIN_EMAIL } from "./config.js?v=19";
+import { createStore } from "./store.js?v=20";
+import { ADMIN_EMAIL } from "./config.js?v=20";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -416,7 +416,7 @@ async function cycle(key, id) {
   if (cnt) cnt.innerHTML = `<span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span>`;
   const mc = document.querySelector(".mine .hdr span");
   if (mc) mc.textContent = `✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}`;
-  try { await state.store.setSessions(day.date, key, sessions, day.status === "closed"); }
+  try { await state.store.setSessions(day.date, key, sessions, day.status === "closed" || !!day.finalAt); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
 
