@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=16";
-import { ADMIN_EMAIL } from "./config.js?v=16";
+import { createStore } from "./store.js?v=17";
+import { ADMIN_EMAIL } from "./config.js?v=17";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -126,8 +126,11 @@ const outDept = () => Object.keys(state.settings.depts || {}).find(isOutDept) ||
 // then what the sheet layout showed. Same-name doctors in Inpatient / OT / LYM columns are left out.
 const OTHER_SEC = /^(inpatient|ot|lym)$/i;
 const subOf = d => (!OTHER_SEC.test(d.section || "") && (state.settings.subs || {})[idName(d.name)]) || d.sub || "";
+// a doctor's department: "name@section" first (two doctors with one name in different sections), then the name
+const secKey = d => idName(d.name) + "@" + String(d.section || "").toLowerCase();
+const assignKey = d => (state.settings.assign || {})[secKey(d)] !== undefined ? secKey(d) : idName(d.name);
 const deptOf = d => {
-  const dep = (state.settings.assign || {})[idName(d.name)];
+  const dep = (state.settings.assign || {})[assignKey(d)];
   if (dep && (state.settings.depts || {})[dep]) return dep;
   return subOf(d) ? outDept() : NO_DEPT;   // a Neuro / Ortho doctor not put in a department yet still counts as Outpatient
 };
@@ -139,7 +142,7 @@ async function saveSettings(patch) {
   try { await state.store.saveSettings(next); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
-async function assignDept(name, value) {
+async function assignDept(name, value, key = idName(name)) {
   const assign = { ...(state.settings.assign || {}) }, depts = { ...(state.settings.depts || {}) };
   if (value === "__new") {
     const d = await modal("قسم جديد", `اسم القسم:<input id="deptName" placeholder="مثلاً Ortho">`, { ok: "ضيف" });
@@ -148,7 +151,7 @@ async function assignDept(name, value) {
     if (!depts[nm]) depts[nm] = PALETTE[Object.keys(depts).length % PALETTE.length];
     value = nm;
   }
-  if (value) assign[idName(name)] = value; else delete assign[idName(name)];
+  if (value) assign[key] = value; else delete assign[key];
   await saveSettings({ depts, assign });
   toast(value ? `${name} اتحط في ${value}` : `${name} اتشال من القسم`);
 }
@@ -310,7 +313,7 @@ function renderToday() {
     ls.set("meKey", state.me); ls.set("me", state.meName);
     renderToday();
   };
-  el.querySelectorAll("[data-dept]").forEach(s => s.onchange = () => assignDept(s.dataset.dept, s.value));
+  el.querySelectorAll("[data-dept]").forEach(s => s.onchange = () => assignDept(s.dataset.dept, s.value, s.dataset.akey));
   el.querySelectorAll("[data-subsel]").forEach(s => s.onchange = () => setSub(s.dataset.subsel, s.value));
   el.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => { state.section = b.dataset.sec; renderToday(); });
   el.querySelectorAll(".sess").forEach(b => b.onclick = () => cycle(b.dataset.key, b.dataset.id));
@@ -348,9 +351,9 @@ function gridHTML(docs) {
 }
 
 function deptSelect(d) {
-  const cur = (state.settings.assign || {})[idName(d.name)] || "";
+  const cur = (state.settings.assign || {})[assignKey(d)] || "";
   const opts = Object.keys(state.settings.depts || {}).map(n => `<option value="${esc(n)}" ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
-  return `<select class="dept-sel" data-dept="${esc(d.name)}" title="القسم">
+  return `<select class="dept-sel" data-dept="${esc(d.name)}" data-akey="${esc(assignKey(d))}" title="القسم">
     <option value="">${NO_DEPT}</option>${opts}<option value="__new">+ قسم جديد…</option></select>${subSelect(d)}`;
 }
 function subSelect(d) {

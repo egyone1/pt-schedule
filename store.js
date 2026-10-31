@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=16";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=17";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
 // Keep in step with importer/codes.py (same list, same rules).
