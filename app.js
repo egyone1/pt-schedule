@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=18";
-import { ADMIN_EMAIL } from "./config.js?v=18";
+import { createStore } from "./store.js?v=19";
+import { ADMIN_EMAIL } from "./config.js?v=19";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -119,6 +119,7 @@ function bindDayTabs(el) {
 const PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
 // only the departments the admin chose; a doctor not put in one yet is "بدون قسم"
 const NO_DEPT = "بدون قسم";
+const NOT_OURS = "مش تبعنا";        // a doctor in the sheet who isn't in our department (assign value "-")
 // Outpatient = the admin's department whose name has "out" in it (Outpatient / outpatient / Out patient)
 const isOutDept = name => /out/i.test(name || "");
 const outDept = () => Object.keys(state.settings.depts || {}).find(isOutDept) || "Outpatient";
@@ -131,6 +132,7 @@ const secKey = d => idName(d.name) + "@" + String(d.section || "").toLowerCase()
 const assignKey = d => (state.settings.assign || {})[secKey(d)] !== undefined ? secKey(d) : idName(d.name);
 const deptOf = d => {
   const dep = (state.settings.assign || {})[assignKey(d)];
+  if (dep === "-") return NOT_OURS;
   if (dep && (state.settings.depts || {})[dep]) return dep;
   return subOf(d) ? outDept() : NO_DEPT;   // a Neuro / Ortho doctor not put in a department yet still counts as Outpatient
 };
@@ -153,7 +155,7 @@ async function assignDept(name, value, key = idName(name)) {
   }
   if (value) assign[key] = value; else delete assign[key];
   await saveSettings({ depts, assign });
-  toast(value ? `${name} اتحط في ${value}` : `${name} اتشال من القسم`);
+  toast(value === "-" ? `${name}: ${NOT_OURS}` : value ? `${name} اتحط في ${value}` : `${name} اتشال من القسم`);
 }
 async function manageDepts() {
   const depts = { ...(state.settings.depts || {}) };
@@ -372,7 +374,7 @@ function deptSelect(d) {
   const cur = (state.settings.assign || {})[assignKey(d)] || "";
   const opts = Object.keys(state.settings.depts || {}).map(n => `<option value="${esc(n)}" ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
   return `<select class="dept-sel" data-dept="${esc(d.name)}" data-akey="${esc(assignKey(d))}" title="القسم">
-    <option value="">${NO_DEPT}</option>${opts}<option value="__new">+ قسم جديد…</option></select>${subSelect(d)}`;
+    <option value="">${NO_DEPT}</option>${opts}<option value="-" ${cur === "-" ? "selected" : ""}>${NOT_OURS}</option><option value="__new">+ قسم جديد…</option></select>${subSelect(d)}`;
 }
 function subSelect(d) {
   if (!isOutDept(deptOf(d)) || OTHER_SEC.test(d.section || "")) return "";
