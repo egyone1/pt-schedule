@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=17";
-import { ADMIN_EMAIL } from "./config.js?v=17";
+import { createStore } from "./store.js?v=18";
+import { ADMIN_EMAIL } from "./config.js?v=18";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -238,11 +238,28 @@ const submitLocked = () => !state.admin && state.day && state.day.date === cairo
 const changedNote = d => d.changedAt && !d.submitted
   ? `<div class="changed">⚠ جدولك اتغيّر في الشيت بعد الـ Submit — راجعه واعمل Submit تاني</div>` : "";
 
-function submitBtn(doc) {
+// after Submit: the patients in order, each with ✓ (came) or ✗ (didn't come), ready to copy as text
+const attendText = doc => doc.sessions.map((s, i) => `${i + 1}. ${String(s.patient || "").replace(/\s+/g, " ").trim()} ${s.status === 1 ? "✓" : s.status === 2 ? "✗" : "؟"}`).join("\n");
+const copyBox = (doc, big) => big
+  ? `<div class="copybox"><textarea readonly rows="${Math.min(doc.sessions.length, 12)}" data-copytext="${esc(doc.key)}">${esc(attendText(doc))}</textarea>
+      <button class="ghost" data-copy="${esc(doc.key)}">📋 انسخ الأسامي</button></div>`
+  : `<button class="ghost copy-sm" data-copy="${esc(doc.key)}">📋 انسخ الأسامي</button>`;
+async function copyAttend(key) {
+  const doc = state.day.doctors[key];
+  if (!doc) return;
+  const txt = attendText(doc);
+  try { await navigator.clipboard.writeText(txt); }
+  catch {
+    const t = document.createElement("textarea"); t.value = txt; document.body.append(t); t.select();
+    document.execCommand("copy"); t.remove();
+  }
+  toast("الأسامي اتنسخت ✓");
+}
+function submitBtn(doc, big = false) {
   if (doc.submitted)
-    return state.admin
+    return (state.admin
       ? `<button class="ghost" data-unsubmit="${esc(doc.key)}">✓ اتعمل Submit · إلغاء</button>`
-      : `<button class="ghost" disabled>✓ اتعمل Submit</button>`;
+      : `<button class="ghost" disabled>✓ اتعمل Submit</button>`) + copyBox(doc, big);
   if (submitLocked()) return `<button class="primary" disabled title="الـ Submit بيفتح الساعة 3 العصر">Submit من الساعة 3</button>`;
   const dis = state.day.status !== "open" && !state.admin ? "disabled" : "";
   return `<button class="primary" data-submit="${esc(doc.key)}" ${dis}>Submit</button>`;
@@ -318,6 +335,7 @@ function renderToday() {
   el.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => { state.section = b.dataset.sec; renderToday(); });
   el.querySelectorAll(".sess").forEach(b => b.onclick = () => cycle(b.dataset.key, b.dataset.id));
   el.querySelectorAll("[data-submit]").forEach(b => b.onclick = () => submit(b.dataset.submit));
+  el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyAttend(b.dataset.copy));
   el.querySelectorAll("[data-unsubmit]").forEach(b => b.onclick = () => unsubmit(b.dataset.unsubmit));
 }
 
@@ -377,7 +395,7 @@ function mineHTML(d) {
       <span style="font-size:13px;color:var(--text-2)">✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}</span></div>
     ${changedNote(d)}
     <div class="list">${d.sessions.map(s => sessHTML(d, s)).join("")}</div>
-  </div><div class="foot">${submitBtn(d)}</div></div>`;
+  </div><div class="foot">${submitBtn(d, true)}</div></div>`;
 }
 
 async function cycle(key, id) {

@@ -326,3 +326,10 @@ dialog { width: min(560px, 94vw); max-height: 88vh; overflow: auto; }
 .subtag { display: inline-block; font-size: 11.5px; font-weight: 600; color: var(--brand); background: var(--brand-soft); border-radius: 99px; padding: 0 8px; line-height: 20px; direction: ltr; }
 table.rep tr.subrow td { background: var(--surface-2); font-size: 13px; }
 table.rep tr.subrow td.nm { padding-inline-start: 34px; }
+
+/* after Submit: copy the patients with ✓ / ✗ */
+.copybox { margin-top: 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; padding: 10px; }
+.copybox textarea { width: 100%; resize: vertical; font: inherit; font-size: 14px; line-height: 1.7; border: 0; background: transparent; color: var(--text); direction: rtl; }
+.copybox button, .copy-sm { margin-top: 6px; }
+.copy-sm { font-size: 12px; padding: 4px 6px; }
+.mine .foot:has(.copybox) { position: static; background: none; }
