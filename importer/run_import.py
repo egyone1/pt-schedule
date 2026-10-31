@@ -186,6 +186,14 @@ def remember_subs(db, doctors):
         if not d.get("sub") or one_group:
             d["sub"] = max(known, key=known.get)
     _safe(lambda: db.set("private/subs", {"counts": counts}))
+    # the official list (settings/departments.subs, from the doctors file) wins over the sheet layout
+    official = (_safe(lambda: db.get("settings/departments")) or {}).get("subs") or {}
+    for d in doctors:
+        if d.get("section", "").lower() in ("inpatient", "ot", "lym"):
+            continue
+        k = re.sub(r"[^a-z0-9؀-ۿ]+", " ", d["name"].lower()).strip()
+        if official.get(k):
+            d["sub"] = official[k]
 
 
 def close_day(db, date, doc):

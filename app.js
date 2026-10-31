@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=15";
-import { ADMIN_EMAIL } from "./config.js?v=15";
+import { createStore } from "./store.js?v=16";
+import { ADMIN_EMAIL } from "./config.js?v=16";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -122,16 +122,20 @@ const NO_DEPT = "بدون قسم";
 // Outpatient = the admin's department whose name has "out" in it (Outpatient / outpatient / Out patient)
 const isOutDept = name => /out/i.test(name || "");
 const outDept = () => Object.keys(state.settings.depts || {}).find(isOutDept) || "Outpatient";
+// Neuro / Ortho: the official list (settings.subs, from the doctors file, admin can change it) comes first,
+// then what the sheet layout showed. Same-name doctors in Inpatient / OT / LYM columns are left out.
+const OTHER_SEC = /^(inpatient|ot|lym)$/i;
+const subOf = d => (!OTHER_SEC.test(d.section || "") && (state.settings.subs || {})[idName(d.name)]) || d.sub || "";
 const deptOf = d => {
   const dep = (state.settings.assign || {})[idName(d.name)];
   if (dep && (state.settings.depts || {})[dep]) return dep;
-  return d.sub ? outDept() : NO_DEPT;      // a Neuro / Ortho doctor not put in a department yet still counts as Outpatient
+  return subOf(d) ? outDept() : NO_DEPT;   // a Neuro / Ortho doctor not put in a department yet still counts as Outpatient
 };
 const deptColor = name => (state.settings.depts || {})[name] || "";
 const dcStyle = name => deptColor(name) ? `style="--dc:${deptColor(name)}"` : "";
 
 async function saveSettings(patch) {
-  const next = { depts: { ...(state.settings.depts || {}) }, assign: { ...(state.settings.assign || {}) }, ...patch };
+  const next = { depts: { ...(state.settings.depts || {}) }, assign: { ...(state.settings.assign || {}) }, subs: { ...(state.settings.subs || {}) }, ...patch };
   try { await state.store.saveSettings(next); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
@@ -307,6 +311,7 @@ function renderToday() {
     renderToday();
   };
   el.querySelectorAll("[data-dept]").forEach(s => s.onchange = () => assignDept(s.dataset.dept, s.value));
+  el.querySelectorAll("[data-subsel]").forEach(s => s.onchange = () => setSub(s.dataset.subsel, s.value));
   el.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => { state.section = b.dataset.sec; renderToday(); });
   el.querySelectorAll(".sess").forEach(b => b.onclick = () => cycle(b.dataset.key, b.dataset.id));
   el.querySelectorAll("[data-submit]").forEach(b => b.onclick = () => submit(b.dataset.submit));
@@ -325,7 +330,7 @@ function gridHTML(docs) {
     return `<div class="col" data-col="${esc(d.key)}">
       <div class="col-head ${d.submitted ? "done" : ""} ${deptColor(deptOf(d)) ? "dc" : ""}" ${dcStyle(deptOf(d))}>
         <div class="nm" title="${esc(d.name)}">${esc(d.name)}</div>
-        ${state.admin ? deptSelect(d) : `<div class="sec">${esc(deptOf(d))} ${d.submitted ? '<span class="badge">· Submit ✓</span>' : ""}</div>`}
+        ${state.admin ? deptSelect(d) : `<div class="sec">${esc(deptOf(d))}${isOutDept(deptOf(d)) && subOf(d) ? " · " + esc(subOf(d)) : ""} ${d.submitted ? '<span class="badge">· Submit ✓</span>' : ""}</div>`}
         <div class="cnt"><span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span></div>
         ${changedNote(d)}
       </div>
@@ -346,7 +351,20 @@ function deptSelect(d) {
   const cur = (state.settings.assign || {})[idName(d.name)] || "";
   const opts = Object.keys(state.settings.depts || {}).map(n => `<option value="${esc(n)}" ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
   return `<select class="dept-sel" data-dept="${esc(d.name)}" title="القسم">
-    <option value="">${NO_DEPT}</option>${opts}<option value="__new">+ قسم جديد…</option></select>`;
+    <option value="">${NO_DEPT}</option>${opts}<option value="__new">+ قسم جديد…</option></select>${subSelect(d)}`;
+}
+function subSelect(d) {
+  if (!isOutDept(deptOf(d)) || OTHER_SEC.test(d.section || "")) return "";
+  const cur = (state.settings.subs || {})[idName(d.name)] || "";
+  const o = (v, t) => `<option value="${v}" ${v === cur ? "selected" : ""}>${t}</option>`;
+  return `<select class="dept-sel" data-subsel="${esc(d.name)}" title="Neuro / Ortho">
+    ${o("", "تلقائي" + (d.sub ? ` (${d.sub})` : ""))}${o("Neuro", "Neuro")}${o("Ortho", "Ortho")}</select>`;
+}
+async function setSub(name, value) {
+  const subs = { ...(state.settings.subs || {}) };
+  if (value) subs[idName(name)] = value; else delete subs[idName(name)];
+  await saveSettings({ subs });
+  toast(value ? `${name} بقى ${value}` : `${name} هيتحدد من الجدول`);
 }
 
 function mineHTML(d) {
@@ -459,11 +477,11 @@ function rowsIn(range) {
     for (const d of Object.values(s.doctors || {})) {
       const sh = d.sheet || {};
       rows.push(state.source === "sheet" ? {
-        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? d.sub || "" : "",
+        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? subOf(d) : "",
         sessions: sh.sessions || 0, cases: sh.cases || 0, noShow: sh.cancelled || 0,
         booked: d.booked || 0, unmarked: 0, treat: sh.treat || {},
       } : {
-        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? d.sub || "" : "",
+        date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? subOf(d) : "",
         sessions: d.attended || 0, cases: d.cases ?? d.attended ?? 0, noShow: d.noShow || 0,
         booked: d.booked || 0, unmarked: d.unmarked || 0, treat: d.treat || {},
       });
@@ -521,7 +539,8 @@ function deptSelectBar() {
   for (const st of state.stats) for (const d of Object.values(st.doctors || {})) {
     const dep = deptOf(d);
     opts.set(dep, dep);
-    if (d.sub && isOutDept(dep)) opts.set(dep + "::" + d.sub, `${dep} · ${SUB_LABEL[d.sub] || d.sub}`);
+    const sb = subOf(d);
+    if (sb && isOutDept(dep)) opts.set(dep + "::" + sb, `${dep} · ${SUB_LABEL[sb] || sb}`);
   }
   const keys = [...opts.keys()].sort();
   if (state.rep.dept !== "all" && !opts.has(state.rep.dept)) state.rep.dept = "all";
@@ -861,7 +880,7 @@ function renderAnalysis() {
     }
     render();
   });
-  state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, ...s }; render(); });
+  state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, subs: {}, ...s }; render(); });
   const askedView = new URLSearchParams(location.search).get("view");  // ?view=stats|analysis (admin)
   if (state.admin && ["stats", "analysis"].includes(askedView)) setView(askedView);
   const askedDay = new URLSearchParams(location.search).get("day");   // ?day=YYYY-MM-DD opens that day
