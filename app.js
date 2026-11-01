@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=22";
-import { ADMIN_EMAIL } from "./config.js?v=22";
+import { createStore } from "./store.js?v=23";
+import { ADMIN_EMAIL } from "./config.js?v=23";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7,8 +7,7 @@ const ls = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
 };
-// height of 15 minutes in the grid: fitted to the screen (fitGrid) so the whole day shows without scrolling
-const ROW = () => state.rowPx || parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row")) || 26;
+const ROW = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row")) || 26;
 const toMin = t => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 const fmtTime = m => { const h = Math.floor(m / 60), mm = String(m % 60).padStart(2, "0"); const h12 = ((h + 11) % 12) + 1; return `${h12}:${mm} ${h < 12 ? "AM" : "PM"}`; };
 const arDate = (iso, opts = { weekday: "long", day: "numeric", month: "long" }) =>
@@ -323,7 +322,6 @@ function renderToday() {
     ${mine ? mineHTML(mine) : gridHTML(visible)}`;
 
   const board = el.querySelector(".board");
-  if (fitGrid(board)) return;               // row height changed -> drawn again at the new size
   if (board && keep.left != null) { board.scrollLeft = keep.left; board.scrollTop = keep.top; }
   if (keep.y) window.scrollTo(0, keep.y);
 
@@ -342,27 +340,6 @@ function renderToday() {
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyAttend(b.dataset.copy));
   el.querySelectorAll("[data-unsubmit]").forEach(b => b.onclick = () => unsubmit(b.dataset.unsubmit));
 }
-
-// Computers: make the board fill the rest of the screen and pick the 15-minute height so the whole day fits.
-// Phones keep the normal size and scroll inside the board.
-function fitGrid(board) {
-  if (!board || !state.gridSlots) return false;
-  if (innerWidth < 760) { board.style.height = ""; if (state.rowPx) { state.rowPx = 0; renderToday(); return true; } return false; }
-  const top = board.getBoundingClientRect().top + scrollY;
-  const avail = Math.max(380, innerHeight - top - 12);
-  board.style.height = avail + "px";
-  board.style.maxHeight = "none";
-  const head = board.querySelector(".col-head")?.offsetHeight || 92;
-  const foot = Math.max(50, ...[...board.querySelectorAll(".col-foot")].map(f => f.offsetHeight));
-  const row = Math.max(9, Math.min(40, Math.floor((avail - head - foot - 18) / state.gridSlots * 10) / 10));
-  board.classList.toggle("compact", row < 16);   // small rows: name + time only (details stay in the tooltip)
-  if (Math.abs(row - (state.rowPx || 0)) < 0.2) { board.classList.toggle("compact", row < 16); return false; }
-  state.rowPx = row;
-  renderToday();
-  return true;
-}
-let fitTimer;
-addEventListener("resize", () => { clearTimeout(fitTimer); fitTimer = setTimeout(() => { if (state.view === "today" && state.day) renderToday(); }, 200); });
 
 function gridHTML(docs) {
   if (!docs.length) return `<div class="empty"><h2>مفيش دكاترة في القسم ده</h2></div>`;

@@ -129,7 +129,7 @@ main { padding: 10px 14px 14px; max-width: none; margin: 0 auto; }
 /* ---------- schedule grid ---------- */
 .board {
   background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow);
-  overflow: auto; max-height: calc(100vh - 230px); position: relative;
+  overflow-x: auto; overflow-y: hidden; position: relative;   /* full height in the page: the page scrolls, not the table */
 }
 .grid { display: flex; width: max-content; min-width: 100%; }
 .timecol { position: sticky; right: 0; z-index: 6; background: var(--surface); border-left: 1px solid var(--line); width: var(--timecol); flex: none; }
@@ -261,7 +261,6 @@ dialog h3 { font-size: 18px; margin-bottom: 10px; }
   :root { --col: 138px; --timecol: 52px; }
   .charts { grid-template-columns: 1fr; }
   .progress { min-width: 0; width: 100%; }
-  .board { max-height: calc(100vh - 290px); }
 }
 
 .dept-card { cursor: pointer; transition: transform .08s, box-shadow .12s; }
@@ -334,13 +333,6 @@ table.rep tr.subrow td.nm { padding-inline-start: 34px; }
 .copy-sm { font-size: 12px; padding: 4px 6px; }
 .mine .foot:has(.copybox) { position: static; background: none; }
 
-/* fitted grid: compact cards when the whole day is squeezed into the screen */
-.board.compact .sess { font-size: 11px; line-height: 1.2; padding: 1px 5px 1px 20px; gap: 0; border-radius: 6px; }
-.board.compact .sess .d { display: none; }
-.board.compact .sess .t { font-size: 10px; }
-.board.compact .sess .mark { top: 2px; left: 3px; width: 13px; height: 13px; font-size: 9px; }
-.board.compact .sess .x2 { bottom: 1px; left: 3px; font-size: 9.5px; padding: 0 3px; }
-.board.compact .tlabel { font-size: 11px; padding: 0 6px; }
 .col-foot { display: flex; gap: 4px; padding: 5px; }
 .col-foot > * { flex: 1; min-width: 0; }
 .col-foot button { padding: 5px 4px; font-size: 12.5px; }
