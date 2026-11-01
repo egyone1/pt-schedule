@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=21";
-import { ADMIN_EMAIL } from "./config.js?v=21";
+import { createStore } from "./store.js?v=22";
+import { ADMIN_EMAIL } from "./config.js?v=22";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7,7 +7,8 @@ const ls = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
 };
-const ROW = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row")) || 26;
+// height of 15 minutes in the grid: fitted to the screen (fitGrid) so the whole day shows without scrolling
+const ROW = () => state.rowPx || parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row")) || 26;
 const toMin = t => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 const fmtTime = m => { const h = Math.floor(m / 60), mm = String(m % 60).padStart(2, "0"); const h12 = ((h + 11) % 12) + 1; return `${h12}:${mm} ${h < 12 ? "AM" : "PM"}`; };
 const arDate = (iso, opts = { weekday: "long", day: "numeric", month: "long" }) =>
@@ -322,6 +323,7 @@ function renderToday() {
     ${mine ? mineHTML(mine) : gridHTML(visible)}`;
 
   const board = el.querySelector(".board");
+  if (fitGrid(board)) return;               // row height changed -> drawn again at the new size
   if (board && keep.left != null) { board.scrollLeft = keep.left; board.scrollTop = keep.top; }
   if (keep.y) window.scrollTo(0, keep.y);
 
@@ -341,11 +343,33 @@ function renderToday() {
   el.querySelectorAll("[data-unsubmit]").forEach(b => b.onclick = () => unsubmit(b.dataset.unsubmit));
 }
 
+// Computers: make the board fill the rest of the screen and pick the 15-minute height so the whole day fits.
+// Phones keep the normal size and scroll inside the board.
+function fitGrid(board) {
+  if (!board || !state.gridSlots) return false;
+  if (innerWidth < 760) { board.style.height = ""; if (state.rowPx) { state.rowPx = 0; renderToday(); return true; } return false; }
+  const top = board.getBoundingClientRect().top + scrollY;
+  const avail = Math.max(380, innerHeight - top - 12);
+  board.style.height = avail + "px";
+  board.style.maxHeight = "none";
+  const head = board.querySelector(".col-head")?.offsetHeight || 92;
+  const foot = Math.max(50, ...[...board.querySelectorAll(".col-foot")].map(f => f.offsetHeight));
+  const row = Math.max(9, Math.min(40, Math.floor((avail - head - foot - 18) / state.gridSlots * 10) / 10));
+  board.classList.toggle("compact", row < 16);   // small rows: name + time only (details stay in the tooltip)
+  if (Math.abs(row - (state.rowPx || 0)) < 0.2) { board.classList.toggle("compact", row < 16); return false; }
+  state.rowPx = row;
+  renderToday();
+  return true;
+}
+let fitTimer;
+addEventListener("resize", () => { clearTimeout(fitTimer); fitTimer = setTimeout(() => { if (state.view === "today" && state.day) renderToday(); }, 200); });
+
 function gridHTML(docs) {
   if (!docs.length) return `<div class="empty"><h2>مفيش دكاترة في القسم ده</h2></div>`;
   const all = docs.flatMap(d => d.sessions);
   const start = Math.floor(Math.min(...all.map(s => toMin(s.start))) / 60) * 60;
   const end = Math.ceil(Math.max(...all.map(s => toMin(s.end))) / 60) * 60;
+  state.gridSlots = (end - start) / 15;
   const row = ROW(), h = (end - start) / 15 * row;
   const hours = []; for (let m = start; m < end; m += 60) hours.push(m);
   const cols = docs.map(d => {
@@ -363,7 +387,7 @@ function gridHTML(docs) {
       <div class="col-foot">${submitBtn(d)}</div>
     </div>`;
   }).join("");
-  return `<div class="board"><div class="grid">
+  return `<div class="board" style="--row:${row}px"><div class="grid">
     <div class="timecol"><div class="time-head"></div>
       <div class="slots slot-bg" style="height:${h}px">${hours.map(m => `<div class="tlabel">${fmtTime(m)}</div>`).join("")}</div>
       <div class="time-foot"></div></div>
@@ -498,6 +522,7 @@ function rowsIn(range) {
   for (const s of state.stats) {
     if (s.date < range.from || s.date > range.to) continue;
     for (const d of Object.values(s.doctors || {})) {
+      if (state.source !== "sheet" && !d.submitted) continue;   // by doctors: only those who pressed Submit count
       const sh = d.sheet || {};
       rows.push(state.source === "sheet" ? {
         date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? subOf(d) : "",
@@ -586,7 +611,7 @@ const subCell = (dept, sub) => deptCell(dept) + (sub ? ` <span class="subtag">${
 const SOURCES = { doctors: "حسب الدكاترة", sheet: "حسب الجدول" };
 const sourceNote = () => state.source === "sheet"
   ? "الأرقام من ألوان شيت السكرتارية: الأحمر = كنسل، وأي لون تاني = حضر."
-  : "الأرقام من علامات الدكاترة: الأخضر = حضر، الأحمر = كنسل، والأبيض مش متحسوب.";
+  : "الأرقام من علامات الدكاترة اللي عملوا Submit بس: الأخضر = حضر، الأحمر = كنسل، والأبيض مش متحسوب. اللي معملش Submit مش داخل في الأرقام.";
 function metricChips() {
   return `<div class="chips source">${Object.entries(SOURCES).map(([k, l]) =>
       `<button class="chip ${state.source === k ? "active" : ""}" data-source="${k}">${l}</button>`).join("")}</div>

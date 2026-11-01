@@ -93,11 +93,11 @@ h1, h2, h3 { margin: 0; line-height: 1.3; }
 .primary:disabled { opacity: .45; cursor: not-allowed; }
 .danger { color: var(--bad); }
 
-main { padding: 18px 20px 40px; max-width: 1600px; margin: 0 auto; }
+main { padding: 10px 14px 14px; max-width: none; margin: 0 auto; }
 
 /* ---------- toolbar ---------- */
-.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; }
-.day-title h2 { font-size: 24px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 8px; }
+.day-title h2 { font-size: 20px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
 .day-title .sub { color: var(--text-2); font-size: 13px; }
 .spacer { flex: 1; }
 .progress { min-width: 220px; }
@@ -133,9 +133,9 @@ main { padding: 18px 20px 40px; max-width: 1600px; margin: 0 auto; }
 }
 .grid { display: flex; width: max-content; min-width: 100%; }
 .timecol { position: sticky; right: 0; z-index: 6; background: var(--surface); border-left: 1px solid var(--line); width: var(--timecol); flex: none; }
-.col { width: var(--col); flex: none; border-left: 1px solid var(--line); }
+.col { width: var(--col); flex: 1 0 var(--col); border-left: 1px solid var(--line); }   /* few doctors -> wider columns */
 .col-head, .time-head {
-  position: sticky; top: 0; z-index: 5; background: var(--surface); height: 108px; padding: 8px 10px;
+  position: sticky; top: 0; z-index: 5; background: var(--surface); height: 92px; padding: 6px 10px;
   border-bottom: 1px solid var(--line-strong);
 }
 .time-head { z-index: 7; }
@@ -333,3 +333,15 @@ table.rep tr.subrow td.nm { padding-inline-start: 34px; }
 .copybox button, .copy-sm { margin-top: 6px; }
 .copy-sm { font-size: 12px; padding: 4px 6px; }
 .mine .foot:has(.copybox) { position: static; background: none; }
+
+/* fitted grid: compact cards when the whole day is squeezed into the screen */
+.board.compact .sess { font-size: 11px; line-height: 1.2; padding: 1px 5px 1px 20px; gap: 0; border-radius: 6px; }
+.board.compact .sess .d { display: none; }
+.board.compact .sess .t { font-size: 10px; }
+.board.compact .sess .mark { top: 2px; left: 3px; width: 13px; height: 13px; font-size: 9px; }
+.board.compact .sess .x2 { bottom: 1px; left: 3px; font-size: 9.5px; padding: 0 3px; }
+.board.compact .tlabel { font-size: 11px; padding: 0 6px; }
+.col-foot { display: flex; gap: 4px; padding: 5px; }
+.col-foot > * { flex: 1; min-width: 0; }
+.col-foot button { padding: 5px 4px; font-size: 12.5px; }
+.col-foot .copy-sm { margin-top: 0; }
