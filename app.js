@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=23";
-import { ADMIN_EMAIL } from "./config.js?v=23";
+import { createStore } from "./store.js?v=24";
+import { ADMIN_EMAIL } from "./config.js?v=24";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -19,6 +19,7 @@ const state = {
   store: null, admin: false, view: "today",
   openDays: [], day: null, viewDate: null, unsubDay: null,
   stats: [], section: "all", me: ls.get("meKey", ""), meName: ls.get("me", ""),
+  me2: ls.get("meKey2", ""), meName2: ls.get("me2", ""),       // a second column (e.g. Monica works in two sections)
   settings: { depts: {}, assign: {} }, dept: "all",
   dayPick: "today", override: false,   // override = admin opened another date
   charts: [], metric: ls.get("metric", "sessions"), unsubStats: null,
@@ -140,7 +141,7 @@ const deptColor = name => (state.settings.depts || {})[name] || "";
 const dcStyle = name => deptColor(name) ? `style="--dc:${deptColor(name)}"` : "";
 
 async function saveSettings(patch) {
-  const next = { depts: { ...(state.settings.depts || {}) }, assign: { ...(state.settings.assign || {}) }, subs: { ...(state.settings.subs || {}) }, ...patch };
+  const next = { ...state.settings, depts: { ...(state.settings.depts || {}) }, assign: { ...(state.settings.assign || {}) }, subs: { ...(state.settings.subs || {}) }, ...patch };
   try { await state.store.saveSettings(next); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
@@ -273,7 +274,7 @@ function renderToday() {
   const adminBar = state.admin ? adminDayBar() : "";
   if (!day) {
     const early = state.dayPick === "today" && !state.override && cairoNow().hour < 11;   // the 9 AM job can run ~20 min late
-    el.innerHTML = adminBar + dayTabs() + `<div class="empty"><div class="big">🗓️</div>
+    el.innerHTML = noticesHTML() + adminBar + dayTabs() + `<div class="empty"><div class="big">🗓️</div>
       <h2>${early ? "جدول النهارده بيظهر الساعة 9 الصبح (ممكن يتأخر ربع ساعة)" : "مفيش جدول لليوم ده"}</h2>
       <p>جدول اليوم بيظهر أوتوماتيك كل يوم الساعة <b>9 الصبح</b> من شيت السكرتارية، والـ Submit بيفتح الساعة <b>3 العصر</b>.<br>
       الجدول بيتحدّث من الشيت <b>كل ساعة</b>، وتحديث الساعة <b>9 بالليل</b> هو النهائي، وبيفضل مفتوح للدكاترة لحد <b>12 بالليل</b> اليوم اللي بعده.</p></div>`;
@@ -285,6 +286,11 @@ function renderToday() {
   const submitted = docs.filter(d => d.submitted).length;
   // pick by key (two doctors can share a name), fall back to the name on a new day
   const mine = docs.find(d => d.key === state.me) || (state.meName && docs.find(d => idName(d.name) === idName(state.meName)));
+  const mine2 = mine && (docs.find(d => d.key === state.me2 && d.key !== mine.key) ||
+    (state.meName2 && docs.find(d => d.key !== mine.key && idName(d.name) === idName(state.meName2))));
+  const picked = [mine, mine2].filter(Boolean);
+  // admin switch: whole schedule for everyone, or each doctor picks their own name(s) first
+  const showAll = state.admin || state.settings.showAll !== false;
   const visible = docs.filter(d => state.section === "all" || deptOf(d) === state.section);
   // keep the scroll position across re-renders
   const oldBoard = el.querySelector(".board");
@@ -294,7 +300,7 @@ function renderToday() {
     ? `مفتوح لحد 12 بالليل ${day.date === cairoNow().date ? "بكرة" : "النهارده"} · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : day.refreshedAt ? `آخر تحديث من الشيت ${new Date(day.refreshedAt).toLocaleTimeString("ar-EG-u-nu-latn", { timeZone: "Africa/Cairo", hour: "numeric", minute: "2-digit" })} · بيتحدّث كل ساعة لحد 9 بالليل` : "بيتحدّث من الشيت كل ساعة لحد 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
     : `<b style="color:var(--brand)">مقفول ✓</b>${day.autoClosed ? " (اتقفل أوتوماتيك)" : ""}`;
 
-  el.innerHTML = `${adminBar}
+  el.innerHTML = `${noticesHTML()}${adminBar}
     ${day.status === "closed" && state.admin ? `<div class="banner">ده يوم مقفول — إنت بتعدّل كأدمن، والإحصائيات بتتحدّث لوحدها.</div>` : ""}
     <div class="toolbar">
       <div class="day-title">${dayTabs()}<h2>${arDate(day.date)}</h2><div class="sub">${statusLine}</div></div>
@@ -304,12 +310,16 @@ function renderToday() {
       </div>
       <div class="spacer"></div>
       <label class="field">أنا:
-        <select id="meSel"><option value="">كل الدكاترة</option>
+        <select id="meSel"><option value="">${showAll ? "كل الدكاترة" : "اختار اسمك…"}</option>
           ${docs.map(d => `<option value="${esc(d.key)}" ${mine && mine.key === d.key ? "selected" : ""}>${esc(d.name)} · ${esc(deptOf(d))}</option>`).join("")}
         </select></label>
+      ${mine ? `<label class="field">+ اسم تاني:
+        <select id="meSel2"><option value="">—</option>
+          ${docs.filter(d => d.key !== mine.key).map(d => `<option value="${esc(d.key)}" ${mine2 && mine2.key === d.key ? "selected" : ""}>${esc(d.name)} · ${esc(deptOf(d))}</option>`).join("")}
+        </select></label>` : ""}
     </div>
     <div class="toolbar">
-      ${mine ? "" : `<div class="chips">${["all", ...sections].map(s =>
+      ${mine || !showAll ? "" : `<div class="chips">${["all", ...sections].map(s =>
         `<button class="chip ${state.section === s ? "active" : ""}" data-sec="${esc(s)}">${s !== "all" && deptColor(s) ? `<span class="dot" style="background:${deptColor(s)}"></span>` : ""}${s === "all" ? "الكل" : esc(s)}</button>`).join("")}</div>`}
       <div class="spacer"></div>
       <div class="legend">
@@ -319,7 +329,10 @@ function renderToday() {
         <span><b style="font-size:11px;background:var(--text);color:var(--surface);border-radius:6px;padding:0 5px">×2</b> بتتحسب أكتر من جلسة</span>
       </div>
     </div>
-    ${mine ? mineHTML(mine) : gridHTML(visible)}`;
+    ${picked.length ? `<div class="mine-wrap">${picked.map(mineHTML).join("")}</div>`
+      : showAll ? gridHTML(visible)
+      : `<div class="empty"><div class="big">👆</div><h2>اختار اسمك من فوق علشان يظهر جدولك</h2>
+          <p>لو بتشتغل في عمودين (زي قسمين مختلفين) اختار الاسم التاني من «+ اسم تاني».</p></div>`}`;
 
   const board = el.querySelector(".board");
   if (board && keep.left != null) { board.scrollLeft = keep.left; board.scrollTop = keep.top; }
@@ -330,8 +343,17 @@ function renderToday() {
     state.me = e.target.value;
     state.meName = docs.find(d => d.key === state.me)?.name || "";
     ls.set("meKey", state.me); ls.set("me", state.meName);
+    if (!state.me) { state.me2 = ""; state.meName2 = ""; ls.set("meKey2", ""); ls.set("me2", ""); }
     renderToday();
   };
+  const s2 = $("#meSel2");
+  if (s2) s2.onchange = e => {
+    state.me2 = e.target.value;
+    state.meName2 = docs.find(d => d.key === state.me2)?.name || "";
+    ls.set("meKey2", state.me2); ls.set("me2", state.meName2);
+    renderToday();
+  };
+  el.querySelectorAll("[data-del-notice]").forEach(b => b.onclick = () => deleteNotice(b.dataset.delNotice));
   el.querySelectorAll("[data-dept]").forEach(s => s.onchange = () => assignDept(s.dataset.dept, s.value, s.dataset.akey));
   el.querySelectorAll("[data-subsel]").forEach(s => s.onchange = () => setSub(s.dataset.subsel, s.value));
   el.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => { state.section = b.dataset.sec; renderToday(); });
@@ -394,8 +416,8 @@ async function setSub(name, value) {
 function mineHTML(d) {
   const c = counts(d);
   return `<div class="mine"><div class="card">
-    <div class="hdr"><h3>${esc(d.name)}</h3>
-      <span style="font-size:13px;color:var(--text-2)">✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}</span></div>
+    <div class="hdr"><h3>${esc(d.name)} <small style="font-size:13px;color:var(--text-3);font-weight:500">${esc(deptOf(d))}</small></h3>
+      <span data-mc="${esc(d.key)}" style="font-size:13px;color:var(--text-2)">✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}</span></div>
     ${changedNote(d)}
     <div class="list">${d.sessions.map(s => sessHTML(d, s)).join("")}</div>
   </div><div class="foot">${submitBtn(d, true)}</div></div>`;
@@ -415,7 +437,7 @@ async function cycle(key, id) {
   const c = counts(day.doctors[key]);
   const cnt = document.querySelector(`[data-col="${CSS.escape(key)}"] .cnt`);
   if (cnt) cnt.innerHTML = `<span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span>`;
-  const mc = document.querySelector(".mine .hdr span");
+  const mc = document.querySelector(`[data-mc="${CSS.escape(key)}"]`);
   if (mc) mc.textContent = `✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}`;
   try { await state.store.setSessions(day.date, key, sessions, day.status === "closed" || !!day.finalAt); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
@@ -451,6 +473,8 @@ function adminDayBar() {
       : `<button class="ghost" id="reopenDay">افتح اليوم تاني للدكاترة</button>`) : ""}
     <button class="ghost" id="deptsBtn">🎨 الأقسام</button>
     <button class="ghost" id="srcBtn">🔗 لينك الشيت</button>
+    <button class="ghost" id="showAllBtn" title="لما يتقفل: كل دكتور يختار اسمه ويشوف جدوله بس">${state.settings.showAll !== false ? "👁 الجدول كله باين للكل" : "🙈 كل دكتور بيشوف جدوله بس"}</button>
+    <button class="ghost" id="noticesBtn">📢 الإعلانات${(state.settings.notices || []).length ? ` (${state.settings.notices.length})` : ""}</button>
     ${state.store.demo ? `<button class="ghost" id="resetDemo">رجّع التجربة من الأول</button>` : ""}
   </div>`;
 }
@@ -468,6 +492,41 @@ function bindAdminBar() {
   $("#resetDemo")?.addEventListener("click", () => state.store.resetDemo());
   $("#deptsBtn")?.addEventListener("click", manageDepts);
   $("#srcBtn")?.addEventListener("click", editSource);
+  $("#showAllBtn")?.addEventListener("click", async () => {
+    const on = state.settings.showAll === false;          // toggle
+    await saveSettings({ showAll: on });
+    toast(on ? "الجدول كله بقى باين للكل" : "كل دكتور هيختار اسمه ويشوف جدوله بس");
+  });
+  $("#noticesBtn")?.addEventListener("click", manageNotices);
+}
+
+/* ---------------- announcements (admin writes, everyone sees at the top) ---------------- */
+function noticesHTML() {
+  const list = state.settings.notices || [];
+  if (!list.length) return "";
+  return `<div class="notices">${list.map(n => `<div class="notice"><span class="ic">📢</span>
+    <div class="tx">${esc(n.text).replace(/\n/g, "<br>")}</div>
+    ${state.admin ? `<button class="x" data-del-notice="${esc(n.id)}" title="امسح الإعلان">✕</button>` : ""}</div>`).join("")}</div>`;
+}
+async function manageNotices() {
+  const list = state.settings.notices || [];
+  const rows = list.map((n, i) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:14px">
+      <input type="checkbox" data-del="${i}" style="width:auto;margin-top:4px"> <span>امسح: ${esc(n.text)}</span></label>`).join("");
+  const d = await modal("📢 الإعلانات",
+    `${rows || '<p style="font-size:13px;color:var(--text-2)">مفيش إعلانات دلوقتي.</p>'}
+     <p style="margin-top:10px;font-size:13px">إعلان جديد (بيظهر فوق للدكاترة كلهم):</p>
+     <textarea id="noticeText" rows="3" style="width:100%;font:inherit" placeholder="مثلاً: اجتماع القسم الخميس الساعة 2"></textarea>`,
+    { ok: "احفظ" });
+  if (!d) return;
+  const keep = list.filter((n, i) => !d.querySelector(`[data-del="${i}"]`)?.checked);
+  const text = d.querySelector("#noticeText").value.trim();
+  if (text) keep.push({ id: Date.now().toString(36), text, at: new Date().toISOString() });
+  await saveSettings({ notices: keep });
+  toast("الإعلانات اتحفظت ✓");
+}
+async function deleteNotice(id) {
+  await saveSettings({ notices: (state.settings.notices || []).filter(n => n.id !== id) });
+  toast("الإعلان اتمسح");
 }
 
 /* ---------------- reports (admin only) ---------------- */
