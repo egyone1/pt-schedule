@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=24";
-import { ADMIN_EMAIL } from "./config.js?v=24";
+import { createStore } from "./store.js?v=25";
+import { ADMIN_EMAIL } from "./config.js?v=25";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
