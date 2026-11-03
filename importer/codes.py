@@ -2,8 +2,8 @@
 
 Session rule (from the head of department, Oct 2026):
   * ex, balance, pb, wb and gait are each a session of their own, even next to other treatments;
-  * all the other treatments in the cell together are one session - x2 on any of them (mt*2, es*2,
-    speech*2, laserx2...) makes it two;
+  * all the other treatments in the cell together are one session - only MT x2 (mt*2, mtx2, 2mt) makes it
+    two; laser x2, us x2, es x2... stay one session (confirmed by the head of department, Nov 2026);
   * "x2" written on its own in the cell ("mt+es · x2") doubles the whole session (Nov 2026);
   * a cell with only the patient's name is one session.
 Keep in step with treatmentsOf / unitsOf in store.js.
@@ -56,7 +56,7 @@ def units_of(details):
     codes = parse_codes(details)
     own = sum(t for n, t in codes if n in OWN_SESSION)
     rest = [(n, t) for n, t in codes if n not in OWN_SESSION]
-    base = (2 if (whole_x2 or any(t == 2 for n, t in rest)) else 1) if rest else 0
+    base = (2 if (whole_x2 or any(n == "MT" and t == 2 for n, t in rest)) else 1) if rest else 0
     if whole_x2 and not rest:
         own = own * 2 if own else 2
     return max(1, base + own)
