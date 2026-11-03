@@ -74,7 +74,20 @@ def split_booking(text):
     if extra:
         name = name + " + " + " + ".join(extra)
     details = [l for l in lines if l not in names]
+    # treatment written on the same line as the name ("طارق لظفي mt*2+us*2"): move it to the details
+    name, moved = split_name_codes(name)
+    if moved:
+        details.insert(0, moved)
     return name, " · ".join(details)
+
+
+_NAME_CODES = re.compile(r"^([^a-zA-Z]*[؀-ۿ][^a-zA-Z]*?)\s+([a-zA-Z].*)$")
+
+
+def split_name_codes(name):
+    """'Arabic name  mt*2+us*2' -> ('Arabic name', 'mt*2+us*2'); a Latin-only name stays as it is."""
+    m = _NAME_CODES.match(name or "")
+    return (m.group(1).strip(), m.group(2).strip()) if m else (name, "")
 
 
 def time_of(v):
