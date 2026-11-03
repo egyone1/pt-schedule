@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=25";
-import { ADMIN_EMAIL } from "./config.js?v=25";
+import { createStore } from "./store.js?v=26";
+import { ADMIN_EMAIL } from "./config.js?v=26";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -220,10 +220,16 @@ function counts(doc) {
     un: s.filter(x => !x.status).length,
   };
 }
-function sessHTML(doc, s, top, height) {
+// a session over 1h15 that still counts as one: probably a big session -> "review"
+const needsReview = s => (s.minutes || 0) > 75 && (s.units || 1) < 2 && !s.unitsManual;
+function sessHTML(doc, s, top, height, ctl = state.admin) {
   const style = top == null ? "" : `style="top:${top}px;height:${height}px"`;
   const locked = canEdit(doc) ? "" : " locked";
-  const two = s.units > 1 ? `<span class="x2" title="الخانة دي بتتحسب ${s.units} جلسات">×${s.units}</span>` : "";
+  const u = s.units || 1, review = needsReview(s);
+  const can = ctl && (state.admin || canEdit(doc));
+  const label = u > 1 ? `×${u}` : review ? "مراجعة ×؟" : can ? "×1" : "";
+  const tip = review ? "الجلسة أطول من ساعة وربع ومتحسبة جلسة واحدة — راجعها" : `الخانة دي بتتحسب ${u} ${u > 1 ? "جلسات" : "جلسة"}`;
+  const two = label ? `<span class="x2 ${review ? "rev" : ""} ${u === 1 && !review ? "one" : ""} ${can ? "ux" : ""}" ${can ? `role="button" data-ux-key="${esc(doc.key)}" data-ux-id="${esc(s.id)}"` : ""} title="${tip}${can ? " · دوس للتغيير" : ""}">${label}</span>` : "";
   return `<button class="sess s${s.status || 0}${locked}" data-key="${esc(doc.key)}" data-id="${esc(s.id)}" ${style}
     title="${esc(s.patient)} — ${esc(s.details)}">
     <span class="mark" aria-hidden="true"></span>${two}<span class="p">${esc(s.patient)}</span>
@@ -242,7 +248,7 @@ const changedNote = d => d.changedAt && !d.submitted
   ? `<div class="changed">⚠ جدولك اتغيّر في الشيت بعد الـ Submit — راجعه واعمل Submit تاني</div>` : "";
 
 // after Submit: the patients in order, each with ✓ (came) or ✗ (didn't come), ready to copy as text
-const attendText = doc => doc.sessions.map((s, i) => `${i + 1}. ${String(s.patient || "").replace(/\s+/g, " ").trim()} ${s.status === 1 ? "✓" : s.status === 2 ? "✗" : "؟"}`).join("\n");
+const attendText = doc => doc.sessions.map((s, i) => `${i + 1}. ${String(s.patient || "").replace(/\s+/g, " ").trim()} ${s.status === 1 ? "✓" : s.status === 2 ? "✗" : "؟"}${(s.units || 1) > 1 ? " x" + s.units : ""}`).join("\n");
 const copyBox = (doc, big) => big
   ? `<div class="copybox"><textarea readonly rows="${Math.min(doc.sessions.length, 12)}" data-copytext="${esc(doc.key)}">${esc(attendText(doc))}</textarea>
       <button class="ghost" data-copy="${esc(doc.key)}">📋 انسخ الأسامي</button></div>`
@@ -277,7 +283,7 @@ function renderToday() {
     el.innerHTML = noticesHTML() + adminBar + dayTabs() + `<div class="empty"><div class="big">🗓️</div>
       <h2>${early ? "جدول النهارده بيظهر الساعة 9 الصبح (ممكن يتأخر ربع ساعة)" : "مفيش جدول لليوم ده"}</h2>
       <p>جدول اليوم بيظهر أوتوماتيك كل يوم الساعة <b>9 الصبح</b> من شيت السكرتارية، والـ Submit بيفتح الساعة <b>3 العصر</b>.<br>
-      الجدول بيتحدّث من الشيت <b>كل ساعة</b>، وتحديث الساعة <b>9 بالليل</b> هو النهائي، وبيفضل مفتوح للدكاترة لحد <b>12 بالليل</b> اليوم اللي بعده.</p></div>`;
+      الجدول بيتحدّث من الشيت <b>كل ساعة</b>، وتحديث الساعة <b>9 بالليل</b> هو النهائي، وكل يوم بيفضل مفتوح للدكاترة لحد <b>آخر الشهر</b> علشان اللي فاته يعمل Submit.</p></div>`;
     bindAdminBar(); bindDayTabs(el);
     return;
   }
@@ -297,7 +303,7 @@ function renderToday() {
   const keep = { left: oldBoard?.scrollLeft, top: oldBoard?.scrollTop, y: window.scrollY };
 
   const statusLine = day.status === "open"
-    ? `مفتوح لحد 12 بالليل ${day.date === cairoNow().date ? "بكرة" : "النهارده"} · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : day.refreshedAt ? `آخر تحديث من الشيت ${new Date(day.refreshedAt).toLocaleTimeString("ar-EG-u-nu-latn", { timeZone: "Africa/Cairo", hour: "numeric", minute: "2-digit" })} · بيتحدّث كل ساعة لحد 9 بالليل` : "بيتحدّث من الشيت كل ساعة لحد 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
+    ? `مفتوح للدكاترة لحد آخر الشهر · تاب «${esc(day.sheet)}» · ${day.finalAt ? "<b>الجدول النهائي</b> (اتحدّث الساعة 9 بالليل)" : day.refreshedAt ? `آخر تحديث من الشيت ${new Date(day.refreshedAt).toLocaleTimeString("ar-EG-u-nu-latn", { timeZone: "Africa/Cairo", hour: "numeric", minute: "2-digit" })} · بيتحدّث كل ساعة لحد 9 بالليل` : "بيتحدّث من الشيت كل ساعة لحد 9 بالليل"}${submitLocked() ? " · الـ Submit من الساعة 3" : ""}`
     : `<b style="color:var(--brand)">مقفول ✓</b>${day.autoClosed ? " (اتقفل أوتوماتيك)" : ""}`;
 
   el.innerHTML = `${noticesHTML()}${adminBar}
@@ -329,6 +335,7 @@ function renderToday() {
         <span><b style="font-size:11px;background:var(--text);color:var(--surface);border-radius:6px;padding:0 5px">×2</b> بتتحسب أكتر من جلسة</span>
       </div>
     </div>
+    ${pendingHTML(picked)}
     ${picked.length ? `<div class="mine-wrap">${picked.map(mineHTML).join("")}</div>`
       : showAll ? gridHTML(visible)
       : `<div class="empty"><div class="big">👆</div><h2>اختار اسمك من فوق علشان يظهر جدولك</h2>
@@ -358,6 +365,8 @@ function renderToday() {
   el.querySelectorAll("[data-subsel]").forEach(s => s.onchange = () => setSub(s.dataset.subsel, s.value));
   el.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => { state.section = b.dataset.sec; renderToday(); });
   el.querySelectorAll(".sess").forEach(b => b.onclick = () => cycle(b.dataset.key, b.dataset.id));
+  el.querySelectorAll(".ux").forEach(b => b.onclick = e => { e.stopPropagation(); setUnits(b.dataset.uxKey, b.dataset.uxId); });
+  el.querySelectorAll("[data-goday]").forEach(b => b.onclick = () => { state.override = true; watchDay(b.dataset.goday); });
   el.querySelectorAll("[data-submit]").forEach(b => b.onclick = () => submit(b.dataset.submit));
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyAttend(b.dataset.copy));
   el.querySelectorAll("[data-unsubmit]").forEach(b => b.onclick = () => unsubmit(b.dataset.unsubmit));
@@ -413,13 +422,25 @@ async function setSub(name, value) {
   toast(value ? `${name} بقى ${value}` : `${name} هيتحدد من الجدول`);
 }
 
+// open days of this month (not today / yesterday, they have their own tabs) where the picked doctor hasn't submitted
+function pendingHTML(picked) {
+  if (!picked.length || state.admin) return "";
+  const t = cairoNow().date, y = addDays(t, -1), month = t.slice(0, 7);
+  const names = picked.map(d => idName(d.name));
+  const days = state.openDays.filter(d => d.date.startsWith(month) && d.date !== t && d.date !== y && d.date !== state.viewDate &&
+    Object.values(d.doctors || {}).some(x => names.includes(idName(x.name)) && !x.submitted)).sort((a, b) => a.date.localeCompare(b.date));
+  if (!days.length) return "";
+  return `<div class="pending"><b>⚠️ أيام لسه معملتلهاش Submit:</b> ${days.map(d =>
+    `<button class="chip" data-goday="${d.date}">${arDate(d.date, { weekday: "short", day: "numeric", month: "short" })}</button>`).join("")}</div>`;
+}
+
 function mineHTML(d) {
   const c = counts(d);
   return `<div class="mine"><div class="card">
     <div class="hdr"><h3>${esc(d.name)} <small style="font-size:13px;color:var(--text-3);font-weight:500">${esc(deptOf(d))}</small></h3>
       <span data-mc="${esc(d.key)}" style="font-size:13px;color:var(--text-2)">✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}</span></div>
     ${changedNote(d)}
-    <div class="list">${d.sessions.map(s => sessHTML(d, s)).join("")}</div>
+    <div class="list">${d.sessions.map(s => sessHTML(d, s, null, null, true)).join("")}</div>
   </div><div class="foot">${submitBtn(d, true)}</div></div>`;
 }
 
@@ -439,6 +460,17 @@ async function cycle(key, id) {
   if (cnt) cnt.innerHTML = `<span style="color:var(--good)">✓ <b>${c.att}</b></span><span style="color:var(--bad)">✗ <b>${c.ns}</b></span><span>لسه <b>${c.un}</b></span>`;
   const mc = document.querySelector(`[data-mc="${CSS.escape(key)}"]`);
   if (mc) mc.textContent = `✓ ${c.att} · ✗ ${c.ns} · لسه ${c.un}`;
+  try { await state.store.setSessions(day.date, key, sessions, day.status === "closed" || !!day.finalAt); }
+  catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
+}
+
+// x1 -> x2 -> x3 -> x1 (set by hand: the hourly sheet reading keeps it)
+async function setUnits(key, id) {
+  const day = state.day, doc = { key, ...day.doctors[key] };
+  if (!state.admin && !canEdit(doc)) { toast("اتعمل Submit — الأدمن بس يقدر يعدّل"); return; }
+  const sessions = doc.sessions.map(s => s.id === id ? { ...s, units: (s.units || 1) % 3 + 1, unitsManual: true } : s);
+  day.doctors[key].sessions = sessions;
+  renderToday();
   try { await state.store.setSessions(day.date, key, sessions, day.status === "closed" || !!day.finalAt); }
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }

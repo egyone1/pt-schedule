@@ -2,7 +2,9 @@
 
 Session rule (from the head of department, Oct 2026):
   * ex, balance, pb, wb and gait are each a session of their own, even next to other treatments;
-  * all the other treatments in the cell together are one session - "mt2" (mt*2, mtx2, 2mt) makes it two;
+  * all the other treatments in the cell together are one session - x2 on any of them (mt*2, es*2,
+    speech*2, laserx2...) makes it two;
+  * "x2" written on its own in the cell ("mt+es · x2") doubles the whole session (Nov 2026);
   * a cell with only the patient's name is one session.
 Keep in step with treatmentsOf / unitsOf in store.js.
 """
@@ -45,11 +47,18 @@ def treatments_of(details):
     return out
 
 
+_WHOLE_X2 = re.compile(r"^\s*([*x×]\s*2|2\s*[*x×])\s*$")
+
+
 def units_of(details):
+    parts = re.split(r"[+·,/\n]", str(details or "").lower())
+    whole_x2 = any(_WHOLE_X2.match(p) for p in parts)     # "x2" on its own -> the whole session twice
     codes = parse_codes(details)
     own = sum(t for n, t in codes if n in OWN_SESSION)
     rest = [(n, t) for n, t in codes if n not in OWN_SESSION]
-    base = (2 if any(n == "MT" and t == 2 for n, t in rest) else 1) if rest else 0
+    base = (2 if (whole_x2 or any(t == 2 for n, t in rest)) else 1) if rest else 0
+    if whole_x2 and not rest:
+        own = own * 2 if own else 2
     return max(1, base + own)
 
 
@@ -64,5 +73,6 @@ def sheet_mark(cell):
 
 if __name__ == "__main__":
     for t in ["mt+es+us", "ex", "mt+es+ex", "ex+balance", "mt*2+es", "mt*2+ex+gait", "", "2mt+es", "mtx2+shockwave",
-              "wb", "pb · n", "aq", "mt · icu"]:
+              "wb", "pb · n", "aq", "mt · icu", "mt+es+shockeave · x2", "mt+es*2", "mt+es x2", "Speech*2",
+              "scanner laserx2+bibatronx2", "ex · x2", "mld+comp"]:
         print("%-16s -> %d   %s" % (t, units_of(t), treatments_of(t)))

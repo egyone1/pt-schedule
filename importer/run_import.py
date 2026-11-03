@@ -140,8 +140,11 @@ def merge_final(live, parsed):
             old = by_ns.get((d["name"], d.get("section"))) or by_name.get(d["name"])
         if old:
             marks = {_who(x): x.get("status", 0) for x in old.get("sessions", [])}
+            manual = {_who(x): x["units"] for x in old.get("sessions", []) if x.get("unitsManual")}
             for x in d["sessions"]:
                 x["status"] = marks.get(_who(x), 0)
+                if _who(x) in manual:                    # x1 / x2 set by hand on the site stays
+                    x["units"], x["unitsManual"] = manual[_who(x)], True
             same = sorted(map(_sig, old.get("sessions", []))) == sorted(map(_sig, d["sessions"]))
             if same:
                 for k in ("submitted", "submittedAt"):
@@ -224,7 +227,9 @@ def main():
 
     # anything older than yesterday is closed (also checked at 9 AM in case midnight was missed)
     if mode in ("close", "open", "hourly"):
-        keep_from = (now.date() - dt.timedelta(days=1)).isoformat()
+        # days stay open for the doctors the whole month (to submit a day they missed); a new month starts
+        # fresh: older days close - but yesterday always keeps its day
+        keep_from = min(now.date().replace(day=1), now.date() - dt.timedelta(days=1)).isoformat()
         for d, doc in db.query_eq("days", "status", "open"):
             if d < keep_from:
                 close_day(db, d, doc)

@@ -351,3 +351,12 @@ table.rep tr.subrow td.nm { padding-inline-start: 34px; }
 .notice .tx { flex: 1; font-weight: 600; }
 .notice .x { background: none; border: 0; color: var(--text-3); font-size: 16px; cursor: pointer; padding: 0 4px; }
 .notice .x:hover { color: var(--bad); }
+
+/* x1 / x2 control and "review" badge on a session */
+.sess .x2.ux { cursor: pointer; }
+.sess .x2.one { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--line-strong); }
+.sess .x2.rev { background: var(--warn); color: #fff; }
+.mine .sess .x2 { bottom: 8px; left: 12px; font-size: 12px; padding: 1px 7px; }
+/* days still to submit (picked doctor) */
+.pending { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 0 0 12px; padding: 10px 12px;
+  border-radius: 12px; background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); font-size: 14px; }
