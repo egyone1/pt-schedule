@@ -2,9 +2,10 @@
 
 Session rule (from the head of department, Oct 2026):
   * ex, balance, pb, wb and gait are each a session of their own, even next to other treatments;
-  * all the other treatments in the cell together are one session - only MT x2 (mt*2, mtx2, 2mt) makes it
-    two; laser x2, us x2, es x2... stay one session (confirmed by the head of department, Nov 2026);
-  * "x2" written on its own in the cell ("mt+es · x2") doubles the whole session (Nov 2026);
+  * all the other treatments in the cell together are one session - MT x2 (mt*2, mtx2, 2mt) makes it two;
+  * any other x2 ("mt us x2", "mt+us*2", "mt+es · x2") is read from the length (Nov 2026): the whole session
+    twice takes more than an hour, one treatment repeated (mt + 2 us) fits in 45-60 min ->
+    over 60 minutes = two sessions, otherwise one;
   * a cell with only the patient's name is one session.
 Keep in step with treatmentsOf / unitsOf in store.js.
 """
@@ -28,16 +29,42 @@ YELLOW = {"FFFFFF00"}                                   # inpatient in the booki
 _TWICE = re.compile(r"[*x×]\s*2|2\s*[*x×]|^\s*2\s*[a-z]|[a-z]\s*2\s*$")
 
 
+_WHOLE_X2 = re.compile(r"^\s*([*x×]\s*2|2\s*[*x×])\s*$")
+_STRIP_X = lambda t: re.sub(r"[*x×]?\s*\d+|\d+\s*[*x×]", "", t).strip(" *\"'\t")
+
+
+def _scan(details):
+    """-> ([(treatment name, times)], whole_x2). Codes may be joined by + or only by spaces ("mt us x2");
+    an "x2" standing on its own marks the cell as x2."""
+    codes, whole = [], False
+    for part in re.split(r"[+·,/\n]", str(details or "").lower()):
+        if _WHOLE_X2.match(part):
+            whole = True
+            continue
+        key = _STRIP_X(part)
+        if key in TREATMENTS:
+            codes.append((TREATMENTS[key], 2 if _TWICE.search(part) else 1))
+            continue
+        toks, i = part.split(), 0                       # "mt us x2", "mt*2 us *2"
+        while i < len(toks):
+            if _WHOLE_X2.match(toks[i]):
+                whole = True
+                i += 1
+                continue
+            two = " ".join(toks[i:i + 2])
+            if i + 1 < len(toks) and _STRIP_X(two) in TREATMENTS:     # "hot mgt", "scanner laser"
+                codes.append((TREATMENTS[_STRIP_X(two)], 2 if _TWICE.search(two) else 1))
+                i += 2
+                continue
+            if _STRIP_X(toks[i]) in TREATMENTS:
+                codes.append((TREATMENTS[_STRIP_X(toks[i])], 2 if _TWICE.search(toks[i]) else 1))
+            i += 1
+    return codes, whole
+
+
 def parse_codes(details):
     """-> [(treatment name, times)] for the known codes in the cell."""
-    out = []
-    for part in re.split(r"[+·,/\n]", str(details or "").lower()):
-        times = 2 if _TWICE.search(part) else 1
-        key = re.sub(r"[*x×]?\s*\d+|\d+\s*[*x×]", "", part).strip(" *\"'\t")
-        name = TREATMENTS.get(key)
-        if name:
-            out.append((name, times))
-    return out
+    return _scan(details)[0]
 
 
 def treatments_of(details):
@@ -47,17 +74,15 @@ def treatments_of(details):
     return out
 
 
-_WHOLE_X2 = re.compile(r"^\s*([*x×]\s*2|2\s*[*x×])\s*$")
-
-
-def units_of(details):
-    parts = re.split(r"[+·,/\n]", str(details or "").lower())
-    whole_x2 = any(_WHOLE_X2.match(p) for p in parts)     # "x2" on its own -> the whole session twice
-    codes = parse_codes(details)
+def units_of(details, minutes=None):
+    codes, whole_x2 = _scan(details)
+    long = (minutes or 0) > 60                     # the whole session twice takes more than an hour
     own = sum(t for n, t in codes if n in OWN_SESSION)
     rest = [(n, t) for n, t in codes if n not in OWN_SESSION]
-    base = (2 if (whole_x2 or any(n == "MT" and t == 2 for n, t in rest)) else 1) if rest else 0
-    if whole_x2 and not rest:
+    mt2 = any(n == "MT" and t == 2 for n, t in rest)
+    other_x2 = whole_x2 or any(n != "MT" and t == 2 for n, t in rest)
+    base = (2 if mt2 or (other_x2 and long) else 1) if rest else 0
+    if whole_x2 and long and not rest:
         own = own * 2 if own else 2
     return max(1, base + own)
 

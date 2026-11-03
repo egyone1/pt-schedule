@@ -214,7 +214,7 @@ def parse_day(path_or_wb, day):
                 "start": start.strftime("%H:%M"),
                 "end": end_dt.strftime("%H:%M"),
                 "minutes": dur,
-                "units": units_of(details),
+                "units": units_of(details, dur),
                 "sheet": sheet_mark(ws.cell(r, c)),   # red = cancelled, yellow = inpatient
                 "status": 0,
             })
