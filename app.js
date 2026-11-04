@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=27";
-import { ADMIN_EMAIL } from "./config.js?v=27";
+import { createStore } from "./store.js?v=28";
+import { ADMIN_EMAIL } from "./config.js?v=28";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -268,7 +268,7 @@ function submitBtn(doc, big = false) {
   if (doc.submitted)
     return (state.admin
       ? `<button class="ghost" data-unsubmit="${esc(doc.key)}">✓ اتعمل Submit · إلغاء</button>`
-      : `<button class="ghost" disabled>✓ اتعمل Submit</button>`) + copyBox(doc, big);
+      : `<button class="ghost" disabled>✓ Submit</button>${state.day.status === "open" ? `<button class="ghost" data-edit="${esc(doc.key)}" title="يلغي الـ Submit علشان تعدّل، وبعدين تعمل Submit تاني">✏️ تعديل</button>` : ""}`) + copyBox(doc, big);
   if (submitLocked()) return `<button class="primary" disabled title="الـ Submit بيفتح الساعة 3 العصر">Submit من الساعة 3</button>`;
   const dis = state.day.status !== "open" && !state.admin ? "disabled" : "";
   return `<button class="primary" data-submit="${esc(doc.key)}" ${dis}>Submit</button>`;
@@ -370,6 +370,7 @@ function renderToday() {
   el.querySelectorAll("[data-submit]").forEach(b => b.onclick = () => submit(b.dataset.submit));
   el.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => copyAttend(b.dataset.copy));
   el.querySelectorAll("[data-unsubmit]").forEach(b => b.onclick = () => unsubmit(b.dataset.unsubmit));
+  el.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => editAgain(b.dataset.edit));
 }
 
 function gridHTML(docs) {
@@ -486,6 +487,16 @@ async function submit(key) {
     const closed = await state.store.setSubmitted(state.day.date, key, true);
     toast(closed ? "كل الدكاترة خلّصوا — اليوم اتقفل والأرقام اتحفظت ✓" : "اتعمل Submit ✓");
   } catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
+}
+// a doctor changes their marks after Submit: the Submit is taken back, they edit, then Submit again
+async function editAgain(key) {
+  const doc = state.day.doctors[key];
+  const ok = await modal(`تعديل — ${doc.name}`,
+    "الـ Submit هيتلغي علشان تقدر تعدّل العلامات.<br>بعد ما تخلّص <b>اعمل Submit تاني</b> — من غيره الأرقام بتاعتك مش هتتحسب.",
+    { ok: "عدّل" });
+  if (!ok) return;
+  try { await state.store.setSubmitted(state.day.date, key, false); toast("تقدر تعدّل دلوقتي — متنساش تعمل Submit تاني"); }
+  catch (e) { console.error(e); toast("محصلش — جرّب تاني"); }
 }
 async function unsubmit(key) {
   await state.store.setSubmitted(state.day.date, key, false);

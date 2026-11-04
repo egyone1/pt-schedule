@@ -282,8 +282,7 @@ def main():
     live.update({"doctors": doctors, done_key: stamp, "sheet": parsed["sheet"]})
     if changed and live.get("status") == "closed":
         live["status"] = "open"                      # someone has to re-check a changed schedule
-    elif live.get("status") == "open" and all(d.get("submitted") for d in doctors.values()):
-        live["status"] = "closed"; live["closedAt"] = stamp
+    # a day where everyone submitted stays open too (doctors may take a Submit back to edit); the month closes it
     db.set("days/" + date, live)
     if live["status"] == "closed" or mode == "final":
         # 9 PM is the final schedule: the day counts in the statistics from now on (the user wants the

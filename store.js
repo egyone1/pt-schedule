@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=27";
+import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=28";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
 // Keep in step with importer/codes.py (same list, same rules).
@@ -105,9 +105,8 @@ async function firebaseStore() {
         const patch = { [`doctors.${key}.submitted`]: value, [`doctors.${key}.submittedAt`]: value ? nowIso() : null };
         if (value) patch[`doctors.${key}.changedAt`] = null;      // re-submitted -> warning done
         let closed = false;
-        if (value && day.status === "open" && allSubmitted(day)) {
-          patch.status = "closed"; patch.closedAt = nowIso(); closed = true;
-        }
+        // the day is NOT closed when everyone submitted: it stays open to the end of the month (doctors can
+        // take a Submit back to edit); the new month closes it
         if (closed || day.status === "closed" || day.finalAt)      // after the 9 PM read the day is in the statistics
           tx.set(fs.doc(db, "stats", date), { date, doctors: summarize(day) });
         tx.update(dayRef(date), patch);
@@ -178,7 +177,7 @@ async function demoStore() {
       const day = data.days[date];
       day.doctors[key].submitted = value;
       let closed = false;
-      if (value && day.status === "open" && allSubmitted(day)) { day.status = "closed"; closed = true; }
+      // stays open to the end of the month (see the Firebase store)
       if (day.status === "closed") data.stats[date] = { date, doctors: summarize(day) };
       save();
       return closed;
