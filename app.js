@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=28";
-import { ADMIN_EMAIL } from "./config.js?v=28";
+import { createStore } from "./store.js?v=29";
+import { ADMIN_EMAIL, VIEWERS } from "./config.js?v=29";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -66,18 +66,24 @@ function render() {
 
 /* ---------------- admin ---------------- */
 $("#adminBtn").onclick = async () => {
-  if (state.admin) {
-    if (await modal("تسجيل خروج الأدمن", "عايز تخرج من وضع الأدمن؟", { ok: "خروج" })) await state.store.logout();
+  if (state.admin || state.viewer) {
+    if (await modal("تسجيل خروج", `عايز تخرج من حساب «${state.admin ? "الأدمن" : VIEWERS[state.viewer].label}»؟`, { ok: "خروج" })) await state.store.logout();
     return;
   }
-  const d = await modal("دخول الأدمن",
-    `الأدمن بس يقدر يعدّل بعد ما الدكتور يعمل Submit أو بعد ما اليوم يتقفل.
+  const d = await modal("دخول",
+    `<label class="field" style="display:block;margin-bottom:8px">الحساب:
+       <select id="acct" style="width:100%"><option value="admin">الأدمن</option>
+         ${Object.entries(VIEWERS).map(([k, v]) => `<option value="${k}">${v.label} (إحصائيات القسم)</option>`).join("")}
+       </select></label>
      <input id="pw" type="password" placeholder="الباسورد" autocomplete="current-password">
+     <div style="margin-top:6px;font-size:12px;color:var(--text-2)">حسابات الأقسام بتشوف الإحصائيات والمقارنة وتحمّل الداتا بتاعة قسمها بس.</div>
      ${state.store.demo ? '<div style="margin-top:6px;font-size:12px">نسخة التجربة: الباسورد <b>demo</b></div>' : ""}`,
     { ok: "دخول" });
   if (!d) return;
-  try { await state.store.login(ADMIN_EMAIL, d.querySelector("#pw").value); toast("أهلاً يا أدمن ✓"); }
-  catch { toast("الباسورد غلط"); }
+  const acct = d.querySelector("#acct").value;
+  const email = acct === "admin" ? ADMIN_EMAIL : VIEWERS[acct].email;
+  try { await state.store.login(email, d.querySelector("#pw").value); toast(acct === "admin" ? "أهلاً يا أدمن ✓" : `أهلاً — حساب ${VIEWERS[acct].label} ✓`); }
+  catch { toast("الباسورد غلط (أو الحساب لسه معمولش)"); }
 };
 
 /* ---------------- day subscription ---------------- */
@@ -517,6 +523,7 @@ function adminDayBar() {
     <button class="ghost" id="deptsBtn">🎨 الأقسام</button>
     <button class="ghost" id="srcBtn">🔗 لينك الشيت</button>
     <button class="ghost" id="showAllBtn" title="لما يتقفل: كل دكتور يختار اسمه ويشوف جدوله بس">${state.settings.showAll !== false ? "👁 الجدول كله باين للكل" : "🙈 كل دكتور بيشوف جدوله بس"}</button>
+    <button class="ghost" id="acctBtn">👥 حسابات الأقسام</button>
     <button class="ghost" id="noticesBtn">📢 الإعلانات${(state.settings.notices || []).length ? ` (${state.settings.notices.length})` : ""}</button>
     ${state.store.demo ? `<button class="ghost" id="resetDemo">رجّع التجربة من الأول</button>` : ""}
   </div>`;
@@ -541,6 +548,49 @@ function bindAdminBar() {
     toast(on ? "الجدول كله بقى باين للكل" : "كل دكتور هيختار اسمه ويشوف جدوله بس");
   });
   $("#noticesBtn")?.addEventListener("click", manageNotices);
+  $("#acctBtn")?.addEventListener("click", manageAccounts);
+}
+
+/* ---------------- department accounts (statistics only) ---------------- */
+const canStats = () => state.admin || !!state.viewer;
+// "others" = every department that is not Outpatient / Inpatient / Aqua
+const viewerAllows = dep => {
+  if (!state.viewer) return true;
+  const v = VIEWERS[state.viewer], d = String(dep || "").toLowerCase();
+  if (v.depts) return v.depts.includes(d);
+  return !Object.values(VIEWERS).some(x => x.depts && x.depts.includes(d));
+};
+async function manageAccounts() {
+  const made = state.settings.viewers || {};
+  const rows = Object.entries(VIEWERS).map(([k, v]) => `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:8px 0">
+      <b>${v.label}</b> <small style="color:var(--text-3)">${made[k] ? "✓ معمول" : "لسه معمولش"}</small>
+      ${made[k] ? `<input type="password" data-old="${k}" placeholder="الباسورد الحالي" autocomplete="off" style="margin-top:6px">` : ""}
+      <input type="password" data-new="${k}" placeholder="${made[k] ? "الباسورد الجديد" : "باسورد للحساب (6 حروف أو أكتر)"}" autocomplete="new-password" style="margin-top:6px"></div>`).join("");
+  const d = await modal("👥 حسابات الأقسام",
+    `<p style="font-size:13px;color:var(--text-2)">كل حساب بيشوف الإحصائيات والمقارنة ويحمّل الداتا بتاعة قسمه بس، ومش بيعدّل حاجة. Others = باقي الأقسام.</p>
+     ${rows}<p style="font-size:12px;color:var(--text-3)">اللي هتسيبه فاضي مش هيتغير. لو حد نسي الباسورد: امسح الحساب من Firebase وارجع اعمله من هنا.</p>`,
+    { ok: "احفظ" });
+  if (!d) return;
+  const viewers = { ...made };
+  let done = 0;
+  for (const [k, v] of Object.entries(VIEWERS)) {
+    const pw = d.querySelector(`[data-new="${k}"]`).value;
+    if (!pw) continue;
+    if (pw.length < 6) { toast(`${v.label}: الباسورد لازم 6 حروف أو أكتر`); continue; }
+    try {
+      const uid = made[k] ? await state.store.changePassword(v.email, d.querySelector(`[data-old="${k}"]`).value, pw)
+                          : await state.store.createUser(v.email, pw);
+      viewers[k] = { uid, at: new Date().toISOString() };
+      done++;
+    } catch (e) {
+      console.error(e);
+      toast(made[k] ? `${v.label}: الباسورد الحالي غلط` : `${v.label}: محصلش (${e.code === "auth/email-already-in-use" ? "الحساب موجود في Firebase — امسحه من هناك الأول" : "جرّب تاني"})`);
+    }
+  }
+  if (done) {
+    await saveSettings({ viewers, viewerUids: Object.values(viewers).map(x => x.uid) });
+    toast("الحسابات اتحفظت ✓");
+  }
 }
 
 /* ---------------- announcements (admin writes, everyone sees at the top) ---------------- */
@@ -602,6 +652,7 @@ function rowsIn(range) {
     if (s.date < range.from || s.date > range.to) continue;
     for (const d of Object.values(s.doctors || {})) {
       if (state.source !== "sheet" && !d.submitted) continue;   // by doctors: only those who pressed Submit count
+      if (!viewerAllows(deptOf(d))) continue;                     // department account: its own department only
       const sh = d.sheet || {};
       rows.push(state.source === "sheet" ? {
         date: s.date, id: idName(d.name), name: d.name, dept: deptOf(d), sub: isOutDept(deptOf(d)) ? subOf(d) : "",
@@ -665,6 +716,7 @@ function deptSelectBar() {
   const opts = new Map();
   for (const st of state.stats) for (const d of Object.values(st.doctors || {})) {
     const dep = deptOf(d);
+    if (!viewerAllows(dep)) continue;
     opts.set(dep, dep);
     const sb = subOf(d);
     if (sb && isOutDept(dep)) opts.set(dep + "::" + sb, `${dep} · ${SUB_LABEL[sb] || sb}`);
@@ -714,19 +766,19 @@ const noData = msg => `<div class="empty"><div class="big">📊</div><h2>${msg}<
 /* ---------------- STATS ---------------- */
 function renderStats() {
   const el = $("#view-stats");
-  if (!state.admin) return adminOnly(el);
+  if (!canStats()) return adminOnly(el);
   const M = METRICS[state.metric];
   const range = rangeOf(state.rep.preset, state.rep.from, state.rep.to);
   const all = rowsIn(range);
   const rows = all.filter(inDept);
   const A = agg(rows);
   const head = `<div class="toolbar"><div class="day-title"><h2>الإحصائيات</h2><div class="sub">${rangeLabel(range)}${state.rep.dept !== "all" ? " · " + esc(state.rep.dept.replace("::", " · ")) : ""} · <b>${SOURCES[state.source]}</b></div></div>
-      <div class="spacer"></div><button class="ghost" id="csvBtn">⬇ Excel</button><button class="danger" id="delBtn">🗑 مسح داتا</button></div>
+      <div class="spacer"></div><button class="ghost" id="csvBtn">⬇ Excel</button>${state.admin ? '<button class="danger" id="delBtn">🗑 مسح داتا</button>' : ""}</div>
     <div class="card filters">${periodPicker("s", state.rep)}<div class="filter-row">${deptSelectBar()}${metricChips()}</div><p class="hint">${sourceNote()}</p></div>`;
   if (!rows.length) {
     el.innerHTML = head + noData("مفيش أرقام في الفترة دي");
     bindPeriod(el, "s", state.rep, renderStats); bindCommon(el, renderStats);
-    $("#delBtn").onclick = deleteData;
+    if ($("#delBtn")) $("#delBtn").onclick = deleteData;
     return;
   }
 
@@ -799,7 +851,7 @@ function renderStats() {
 
   bindPeriod(el, "s", state.rep, renderStats);
   bindCommon(el, renderStats);
-  $("#delBtn").onclick = deleteData;
+  if ($("#delBtn")) $("#delBtn").onclick = deleteData;
   el.querySelectorAll("[data-pick-dept]").forEach(tr => tr.onclick = () => {
     state.rep.dept = state.rep.dept === tr.dataset.pickDept ? "all" : tr.dataset.pickDept; renderStats();
   });
@@ -875,7 +927,7 @@ const weekdayOf = iso => WEEK[(new Date(iso + "T12:00:00").getDay() + 1) % 7];
 function renderAnalysis() {
   state.charts.forEach(c => c.destroy()); state.charts = [];
   const el = $("#view-analysis");
-  if (!state.admin) return adminOnly(el);
+  if (!canStats()) return adminOnly(el);
   const M = METRICS[state.metric];
   const rA = rangeOf(state.cmpA.preset, state.cmpA.from, state.cmpA.to);
   const rB = rangeOf(state.cmpB.preset, state.cmpB.from, state.cmpB.to);
@@ -990,16 +1042,19 @@ function renderAnalysis() {
 (async function boot() {
   state.store = await createStore();
   $("#demoTag").hidden = !state.store.demo;
-  state.store.onAuth(isAdmin => {
-    state.admin = isAdmin;
-    $("#adminBtn").classList.toggle("on", isAdmin);
-    $("#adminBtn").textContent = isAdmin ? "🔓 أدمن" : "🔒 أدمن";
-    document.querySelectorAll('.tabs [data-view="stats"], .tabs [data-view="analysis"]').forEach(b => b.hidden = !isAdmin);
-    document.querySelector(".tabs").classList.toggle("solo", !isAdmin);
-    if (isAdmin && !state.unsubStats) {
+  state.store.onAuth(user => {
+    state.admin = !!user && user.email === ADMIN_EMAIL;
+    state.viewer = (user && Object.keys(VIEWERS).find(k => VIEWERS[k].email === user.email)) || null;
+    const can = canStats();
+    $("#adminBtn").classList.toggle("on", can);
+    $("#adminBtn").textContent = state.admin ? "🔓 أدمن" : state.viewer ? `🔓 ${VIEWERS[state.viewer].label}` : "🔒 دخول";
+    document.querySelectorAll('.tabs [data-view="stats"], .tabs [data-view="analysis"]').forEach(b => b.hidden = !can);
+    document.querySelector(".tabs").classList.toggle("solo", !can);
+    if (state.viewer) state.rep.dept = "all";
+    if (can && !state.unsubStats) {
       state.unsubStats = state.store.onStats(st => { state.stats = st; if (state.view !== "today") render(); else renderToday(); });
     }
-    if (!isAdmin) {
+    if (!can) {
       if (state.unsubStats) { state.unsubStats(); state.unsubStats = null; }
       state.stats = [];
       state.override = false; followPick();
@@ -1009,7 +1064,7 @@ function renderAnalysis() {
   });
   state.store.onSettings(s => { state.settings = { depts: {}, assign: {}, subs: {}, ...s }; render(); });
   const askedView = new URLSearchParams(location.search).get("view");  // ?view=stats|analysis (admin)
-  if (state.admin && ["stats", "analysis"].includes(askedView)) setView(askedView);
+  if (canStats() && ["stats", "analysis"].includes(askedView)) setView(askedView);
   const askedDay = new URLSearchParams(location.search).get("day");   // ?day=YYYY-MM-DD opens that day
   if (/^\d{4}-\d{2}-\d{2}$/.test(askedDay || "")) { state.override = true; watchDay(askedDay); }
   state.store.onOpenDays(onOpenDays);

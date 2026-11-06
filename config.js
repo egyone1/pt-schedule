@@ -9,3 +9,11 @@ export const firebaseConfig = {
 
 // Only this account can edit after a doctor submits or after the day is closed.
 export const ADMIN_EMAIL = "admin@cleo-pt-schedule.app";
+// Department accounts: statistics, comparison and download for their own department only (no editing).
+// The admin sets their passwords on the site; firestore.rules lets in only the accounts the admin created.
+export const VIEWERS = {
+  outpatient: { label: "Outpatient", email: "outpatient@cleo-pt-schedule.app", depts: ["outpatient"] },
+  inpatient: { label: "Inpatient", email: "inpatient@cleo-pt-schedule.app", depts: ["inpatient"] },
+  aqua: { label: "Aqua", email: "aqua@cleo-pt-schedule.app", depts: ["aqua"] },
+  others: { label: "Others", email: "others@cleo-pt-schedule.app", depts: null },   // every other department
+};

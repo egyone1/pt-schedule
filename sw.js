@@ -1,5 +1,5 @@
 // Bump the number on EVERY change so phones pick up the new version.
-const CACHE='pt-schedule-v28';
+const CACHE='pt-schedule-v29';
 const SHELL=['./','./index.html','./manifest.webmanifest'];
 
 self.addEventListener('install',e=>e.waitUntil(

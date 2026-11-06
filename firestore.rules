@@ -7,6 +7,11 @@ service cloud.firestore {
     function isImporter() {
       return request.auth != null && request.auth.token.email == 'importer@cleo-pt-schedule.app';
     }
+    // department accounts: only the ones the admin created on the site (their uid is in settings)
+    function isViewer() {
+      return request.auth != null
+        && request.auth.uid in get(/databases/$(database)/documents/settings/departments).data.get('viewerUids', []);
+    }
 
     // one document per day, created by the 9 PM import
     match /days/{date} {
@@ -34,7 +39,7 @@ service cloud.firestore {
 
     // per-day totals for the statistics / analysis tabs
     match /stats/{date} {
-      allow read: if isAdmin();                  // statistics are for the admin only
+      allow read: if isAdmin() || isViewer();    // admin + department accounts
       allow write: if isAdmin() || isImporter()
         || get(/databases/$(database)/documents/days/$(date)).data.status == 'open';
     }

@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig, ADMIN_EMAIL } from "./config.js?v=28";
+import { firebaseConfig } from "./config.js?v=29";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
 // Keep in step with importer/codes.py (same list, same rules).
@@ -68,12 +68,26 @@ async function firebaseStore() {
   const db = fs.getFirestore(app);
   const auth = au.getAuth(app);
   const dayRef = date => fs.doc(db, "days", date);
+  let accAuth = null;
+  const accounts = () => accAuth || (accAuth = au.getAuth(initializeApp(firebaseConfig, "accounts")));
 
   return {
     demo: false,
-    onAuth: cb => au.onAuthStateChanged(auth, u => cb(!!u && u.email === ADMIN_EMAIL)),
+    onAuth: cb => au.onAuthStateChanged(auth, u => cb(u ? { email: u.email, uid: u.uid } : null)),
     login: (email, pw) => au.signInWithEmailAndPassword(auth, email, pw),
     logout: () => au.signOut(auth),
+    // department accounts, made by the admin through a second app instance (the admin stays signed in)
+    async createUser(email, pw) {
+      const a = accounts();
+      const c = await au.createUserWithEmailAndPassword(a, email, pw);
+      const uid = c.user.uid; await au.signOut(a); return uid;
+    },
+    async changePassword(email, oldPw, newPw) {
+      const a = accounts();
+      const c = await au.signInWithEmailAndPassword(a, email, oldPw);
+      await au.updatePassword(c.user, newPw);
+      const uid = c.user.uid; await au.signOut(a); return uid;
+    },
 
     onOpenDays(cb) {
       return fs.onSnapshot(fs.query(fs.collection(db, "days"), fs.where("status", "==", "open")),
@@ -149,16 +163,22 @@ async function demoStore() {
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch {} subs.forEach(f => f()); };
   const sub = f => { subs.add(f); f(); return () => subs.delete(f); };
   const clone = o => JSON.parse(JSON.stringify(o));
-  let admin = new URLSearchParams(location.search).has("admin"); const authSubs = new Set();   // demo only: ?demo&admin
+  // demo only: ?demo&admin starts as admin; any account signs in with the password "demo" (or the one set)
+  let user = new URLSearchParams(location.search).has("admin") ? { email: "admin@cleo-pt-schedule.app", uid: "demo-admin" } : null;
+  const authSubs = new Set(), pws = data.demoPws || (data.demoPws = {});
 
   return {
     demo: true,
-    onAuth: cb => { authSubs.add(cb); cb(admin); return () => authSubs.delete(cb); },
+    onAuth: cb => { authSubs.add(cb); cb(user); return () => authSubs.delete(cb); },
     login: async (email, pw) => {
-      if (pw !== "demo") throw new Error("wrong");
-      admin = true; authSubs.forEach(f => f(true));
+      if (pw !== (pws[email] || "demo")) throw new Error("wrong");
+      user = { email, uid: "demo-" + email }; authSubs.forEach(f => f(user));
     },
-    logout: async () => { admin = false; authSubs.forEach(f => f(false)); },
+    logout: async () => { user = null; authSubs.forEach(f => f(null)); },
+    async createUser(email, pw) { pws[email] = pw; save(); return "demo-" + email; },
+    async changePassword(email, oldPw, newPw) {
+      if (oldPw !== (pws[email] || "demo")) throw new Error("wrong"); pws[email] = newPw; save(); return "demo-" + email;
+    },
     onOpenDays: cb => sub(() => cb(Object.values(data.days).filter(d => d.status === "open").map(clone)
       .sort((a, b) => b.date.localeCompare(a.date)))),
     onDay: (date, cb) => sub(() => cb(data.days[date] ? clone(data.days[date]) : null)),
