@@ -144,7 +144,7 @@ def merge_final(live, parsed):
             for x in d["sessions"]:
                 x["status"] = marks.get(_who(x), 0)
                 if _who(x) in manual:                    # x1 / x2 set by hand on the site stays
-                    x["units"], x["unitsManual"] = manual[_who(x)], True
+                    x["units"], x["unitsManual"], x["reviewed"] = manual[_who(x)], True, True
             same = sorted(map(_sig, old.get("sessions", []))) == sorted(map(_sig, d["sessions"]))
             if same:
                 for k in ("submitted", "submittedAt"):

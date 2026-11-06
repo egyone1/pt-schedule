@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=29";
-import { ADMIN_EMAIL, VIEWERS } from "./config.js?v=29";
+import { createStore } from "./store.js?v=30";
+import { ADMIN_EMAIL, VIEWERS } from "./config.js?v=30";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -232,8 +232,9 @@ function sessHTML(doc, s, top, height, ctl = state.admin) {
   const style = top == null ? "" : `style="top:${top}px;height:${height}px"`;
   const locked = canEdit(doc) ? "" : " locked";
   const u = s.units || 1, review = needsReview(s);
-  const can = ctl && (state.admin || canEdit(doc));
-  const label = u > 1 ? `×${u}` : review ? "مراجعة ×؟" : can ? "×1" : "";
+  // the count can be changed only on a "review" session (over 1h15, read as one) - it keeps the toggle after a change
+  const can = ctl && (review || s.reviewed) && (state.admin || canEdit(doc));
+  const label = u > 1 ? `×${u}` : review ? "مراجعة ×؟" : s.reviewed ? "×1 ✓" : "";
   const tip = review ? "الجلسة أطول من ساعة وربع ومتحسبة جلسة واحدة — راجعها" : `الخانة دي بتتحسب ${u} ${u > 1 ? "جلسات" : "جلسة"}`;
   const two = label ? `<span class="x2 ${review ? "rev" : ""} ${u === 1 && !review ? "one" : ""} ${can ? "ux" : ""}" ${can ? `role="button" data-ux-key="${esc(doc.key)}" data-ux-id="${esc(s.id)}"` : ""} title="${tip}${can ? " · دوس للتغيير" : ""}">${label}</span>` : "";
   return `<button class="sess s${s.status || 0}${locked}" data-key="${esc(doc.key)}" data-id="${esc(s.id)}" ${style}
@@ -475,7 +476,9 @@ async function cycle(key, id) {
 async function setUnits(key, id) {
   const day = state.day, doc = { key, ...day.doctors[key] };
   if (!state.admin && !canEdit(doc)) { toast("اتعمل Submit — الأدمن بس يقدر يعدّل"); return; }
-  const sessions = doc.sessions.map(s => s.id === id ? { ...s, units: (s.units || 1) % 3 + 1, unitsManual: true } : s);
+  const cur = doc.sessions.find(s => s.id === id);
+  if (!cur || !(needsReview(cur) || cur.reviewed)) return;      // only "review" sessions can be changed
+  const sessions = doc.sessions.map(s => s.id === id ? { ...s, units: (s.units || 1) % 3 + 1, unitsManual: true, reviewed: true } : s);
   day.doctors[key].sessions = sessions;
   renderToday();
   try { await state.store.setSessions(day.date, key, sessions, day.status === "closed" || !!day.finalAt); }
