@@ -32,9 +32,9 @@ NOT_PATIENT = {"sports", "sport", "inpatient", "outpatient", "orientation", "mee
 def find_sheet(wb, day):
     """Find the tab whose title is e.g. 'Mon 19 Oct', 'Tues  20 Oct ', 'wed 14 oct'."""
     for ws in wb.worksheets:
-        words = ws.title.lower().split()
-        nums = [w for w in words if w.isdigit()]
-        mons = [MONTHS[w[:3]] for w in words if w[:3] in MONTHS]
+        title = ws.title.lower()
+        nums = re.findall(r"\d+", title)                          # also "Sat 7Nov" (no space)
+        mons = [MONTHS[w[:3]] for w in re.findall(r"[a-z]+", title) if w[:3] in MONTHS]
         if nums and mons and int(nums[0]) == day.day and mons[0] == day.month:
             return ws
     return None
