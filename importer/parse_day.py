@@ -69,8 +69,9 @@ def split_booking(text):
         names = [l for l in lines if not l.startswith(NOTE_WORDS)][:1]
     name = names[0] if names else (lines[0] if lines else "")
     # group sessions (aqua) can hold two patients in one block
-    extra = [n for n in names[1:] if len(n.split()) >= 2 and not re.search(r"[a-z]", n.lower())
-             and not re.match(r"^د\s*[/.\s]", n)]          # "د/احمد" = a doctor, not a patient
+    extra = [n for n in names[1:] if len(n.split()) >= 2 and not re.search(r"[a-z0-9٠-٩]", n.lower())
+             and not re.match(r"^د\s*[/\\.\s]", n)                   # "د/احمد", "د\ هاجر" = a doctor, not a patient
+             and not n.startswith(("بعد", "قبل", "فقط", "عدم", "ممنوع", "مع د", "تبع"))]   # notes ("بعد 6")
     if extra:
         name = name + " + " + " + ".join(extra)
     details = [l for l in lines if l not in names]
