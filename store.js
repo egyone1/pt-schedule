@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig } from "./config.js?v=30";
+import { firebaseConfig } from "./config.js?v=32";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
 // Keep in step with importer/codes.py (same list, same rules).
@@ -106,6 +106,9 @@ async function firebaseStore() {
     // sheet link + last import result (admin only - the sheet has patient phone numbers)
     getSource: async () => { const x = await fs.getDoc(fs.doc(db, "private", "source")); return x.exists() ? x.data() : {}; },
     saveSource: url => fs.setDoc(fs.doc(db, "private", "source"), { shareUrl: url, changedAt: nowIso() }, { merge: true }),
+    // admin: ask the importer to re-read the sheet for these days (picked up within ~10 minutes)
+    requestRefresh: dates => fs.setDoc(fs.doc(db, "private", "refresh"), { requestedAt: nowIso(), dates }, { merge: true }),
+    onRefresh: cb => fs.onSnapshot(fs.doc(db, "private", "refresh"), s => cb(s.exists() ? s.data() : {}), () => cb({})),
     async setSessions(date, key, sessions, dayClosed) {
       await fs.updateDoc(dayRef(date), { [`doctors.${key}.sessions`]: sessions, updatedAt: nowIso() });
       if (dayClosed) await this._restat(date);         // totals change once the day is closed or after the 9 PM read
@@ -186,6 +189,8 @@ async function demoStore() {
     onSettings: cb => sub(() => cb(clone(data.settings || {}))),
     async saveSettings(s) { data.settings = s; save(); },
     getSource: async () => ({ ...(data.source || {}) }),
+    async requestRefresh(dates) { data.refresh = { requestedAt: nowIso(), dates }; save(); },
+    onRefresh: cb => sub(() => cb({ ...(data.refresh || {}) })),
     async saveSource(url) { data.source = { ...(data.source || {}), shareUrl: url, changedAt: nowIso() }; save(); },
     async setSessions(date, key, sessions) {
       const day = data.days[date];

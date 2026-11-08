@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=30";
-import { ADMIN_EMAIL, VIEWERS } from "./config.js?v=30";
+import { createStore } from "./store.js?v=32";
+import { ADMIN_EMAIL, VIEWERS } from "./config.js?v=32";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -526,7 +526,9 @@ function adminDayBar() {
     <button class="ghost" id="deptsBtn">🎨 الأقسام</button>
     <button class="ghost" id="srcBtn">🔗 لينك الشيت</button>
     <button class="ghost" id="showAllBtn" title="لما يتقفل: كل دكتور يختار اسمه ويشوف جدوله بس">${state.settings.showAll !== false ? "👁 الجدول كله باين للكل" : "🙈 كل دكتور بيشوف جدوله بس"}</button>
+    <button class="ghost" id="refreshBtn" title="يقرا الشيت تاني لليوم اللي تختاره (خلال 5–10 دقايق)">🔄 حدّث من الشيت</button>
     <button class="ghost" id="acctBtn">👥 حسابات الأقسام</button>
+    ${refreshStatus()}
     <button class="ghost" id="noticesBtn">📢 الإعلانات${(state.settings.notices || []).length ? ` (${state.settings.notices.length})` : ""}</button>
     ${state.store.demo ? `<button class="ghost" id="resetDemo">رجّع التجربة من الأول</button>` : ""}
   </div>`;
@@ -552,6 +554,43 @@ function bindAdminBar() {
   });
   $("#noticesBtn")?.addEventListener("click", manageNotices);
   $("#acctBtn")?.addEventListener("click", manageAccounts);
+  $("#refreshBtn")?.addEventListener("click", askRefresh);
+  if (!state.unsubRefresh) {
+    state.unsubRefresh = true;                // set before subscribing: the first answer can come right away
+    state.unsubRefresh = state.store.onRefresh(r => {
+      const was = state.refresh;
+      if (JSON.stringify(was) === JSON.stringify(r)) return;
+      state.refresh = r;
+      if (was && was.doneAt !== r.doneAt && r.doneAt) toast("التحديث من الشيت خلص ✓");
+      setTimeout(() => { if (state.view === "today" && state.admin) renderToday(); }, 0);   // not inside this render
+    });
+  }
+}
+
+/* ---------------- refresh from the sheet on demand (admin) ---------------- */
+function refreshStatus() {
+  const r = state.refresh || {};
+  if (!r.requestedAt) return "";
+  const t = iso => new Date(iso).toLocaleTimeString("ar-EG-u-nu-latn", { timeZone: "Africa/Cairo", hour: "numeric", minute: "2-digit" });
+  if (!r.doneAt || r.doneAt < r.requestedAt)
+    return `<span class="refresh-st">⏳ التحديث مطلوب من ${t(r.requestedAt)} (${(r.dates || []).map(d => shortDate(d)).join("، ")}) — بيخلص خلال 5–10 دقايق</span>`;
+  const res = Object.values(r.result || {}).join(" · ");
+  return `<span class="refresh-st" title="${esc(res)}">✓ آخر تحديث من الشيت ${t(r.doneAt)}${/error|no tab/i.test(res) ? " — فيه مشكلة: " + esc(res.slice(0, 80)) : ""}</span>`;
+}
+async function askRefresh() {
+  const t = cairoNow().date, month = t.slice(0, 7);
+  const dates = [...new Set([...state.openDays.map(d => d.date), t])].filter(d => d.startsWith(month) && d <= t).sort().reverse();
+  const d = await modal("🔄 حدّث من الشيت",
+    `<p style="font-size:13px;color:var(--text-2)">الموقع هيقرا الشيت تاني لليوم ده ويدخّل أي تعديل (أسامي، حالات اتضافت أو اتشالت). العلامات والـ Submit بيفضلوا زي ما هم. بياخد من 5 لـ 10 دقايق.</p>
+     <label class="field" style="display:block">اليوم:
+       <select id="refDay" style="width:100%">${dates.map(x => `<option value="${x}" ${x === (state.viewDate || t) ? "selected" : ""}>${arDate(x, { weekday: "long", day: "numeric", month: "short" })}</option>`).join("")}
+       <option value="__all">كل أيام الشهر</option></select></label>`,
+    { ok: "حدّث" });
+  if (!d) return;
+  const v = d.querySelector("#refDay").value;
+  const pick = v === "__all" ? dates : [v];
+  try { await state.store.requestRefresh(pick); toast("اتطلب التحديث — هيخلص خلال 5–10 دقايق"); }
+  catch (e) { console.error(e); toast("محصلش — جرّب تاني"); }
 }
 
 /* ---------------- department accounts (statistics only) ---------------- */

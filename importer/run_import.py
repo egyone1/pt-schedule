@@ -206,15 +206,103 @@ def close_day(db, date, doc):
     print("auto-closed", date)
 
 
+def resync_day(db, wb, date):
+    """Bring a stored day up to date with the sheet at any time (also after 9 PM). Doctors are matched by
+    their sheet column even if the name was corrected; marks, Submit and manual x2 are kept."""
+    import copy
+    import re as _re
+    live = db.get("days/" + date)
+    par = parse_day(wb, dt.date.fromisoformat(date))
+    if not par or not par["doctors"]:
+        return "no tab in the sheet"
+    stamp = dt.datetime.now(CAIRO).isoformat()
+    if live is None:
+        par.update({"status": "open", "importedAt": stamp})
+        par["doctors"] = {d["key"]: d for d in par["doctors"]}
+        db.set("days/" + date, par)
+        return "created (%d doctors)" % len(par["doctors"])
+    col = lambda k: int(_re.search(r"_c(\d+)$", k).group(1))
+    old_by_col = {col(k): v for k, v in live["doctors"].items()}
+    prepared = {}
+    for d in par["doctors"]:
+        o = old_by_col.get(col(d["key"]))
+        if o is not None:
+            o = copy.deepcopy(o)
+            o["name"], o["section"] = d["name"], d.get("section", o.get("section"))
+            prepared[d["key"]] = o
+    doctors, changed = merge_final(dict(live, doctors=prepared), par)
+    for k, d in doctors.items():                       # patient text cleaned -> match by a unique start time
+        o = prepared.get(k)
+        if not o:
+            continue
+        old_at, new_at = {}, {}
+        for x in o.get("sessions", []):
+            old_at.setdefault(x["start"], []).append(x)
+        for x in d["sessions"]:
+            new_at.setdefault(x["start"], []).append(x)
+        for t, xs in new_at.items():
+            if len(xs) == 1 and len(old_at.get(t, [])) == 1:
+                x, ox = xs[0], old_at[t][0]
+                if not x.get("status") and ox.get("status"):
+                    x["status"] = ox["status"]
+                if ox.get("unitsManual") and not x.get("unitsManual"):
+                    x["units"], x["unitsManual"], x["reviewed"] = ox["units"], True, True
+        if o.get("submitted") and not d.get("submitted") and \
+                [x["start"] for x in o["sessions"]] == [x["start"] for x in d["sessions"]]:
+            d["submitted"], d["submittedAt"] = True, o.get("submittedAt")
+            d.pop("changedAt", None)
+            if d["name"] in changed:
+                changed.remove(d["name"])
+    live.update({"doctors": doctors, "sheet": par["sheet"], "manualAt": stamp})
+    db.set("days/" + date, live)
+    if live.get("finalAt") or live.get("status") == "closed":
+        db.set("stats/" + date, {"date": date, "doctors": summarize(live)})
+    return "updated (%d doctors%s)" % (len(doctors), "; changed: " + ", ".join(changed) if changed else "")
+
+
+def handle_refresh_request(db):
+    """The admin pressed "refresh from the sheet" on the site -> private/refresh {requestedAt, dates}."""
+    req = _safe(lambda: db.get("private/refresh")) or {}
+    if not req.get("requestedAt") or req.get("requestedAt") <= (req.get("doneAt") or ""):
+        return False
+    dates = [d for d in (req.get("dates") or []) if d]
+    db.update("private/refresh", {"startedAt": dt.datetime.now(CAIRO).isoformat()})
+    results = {}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "book.xlsx")
+            src = _safe(lambda: db.get("private/source")) or {}
+            download_workbook(src.get("shareUrl") or os.environ.get("SHARE_URL"), path)
+            _safe(lambda: db.update("private/source", {"lastOkAt": dt.datetime.now(CAIRO).isoformat(), "lastError": ""}))
+            import openpyxl
+            wb = openpyxl.load_workbook(path)
+            for date in dates:
+                try:
+                    results[date] = resync_day(db, wb, date)
+                except Exception as e:                      # one bad day must not stop the others
+                    results[date] = "error: %s" % str(e)[:120]
+    except Exception as e:
+        results["error"] = str(e)[:200]
+    db.update("private/refresh", {"doneAt": dt.datetime.now(CAIRO).isoformat(), "result": results})
+    print("manual refresh:", results)
+    return True
+
+
 def main():
     """Runs every hour; the Cairo hour decides what to do (or MODE=open|refresh|final|close):
        9 AM-8 PM: create today's schedule if it isn't there yet, else bring it up to date
                   with the sheet (once per hour) - a failed hour is simply redone next hour.
-       9 PM:      last read of the sheet, the final schedule.
+       9 PM:      read of the sheet for the final schedule, read again at 10 PM (late edits).
+       any time:  a refresh the admin asked for on the site (private/refresh), within ~10 minutes.
        midnight:  close every day older than yesterday."""
     now = dt.datetime.now(CAIRO)
     mode = os.environ.get("MODE")
     if not mode:
+        # a refresh the admin asked for on the site comes first, at any hour
+        db0 = Firestore(os.environ["FIREBASE_PROJECT"],
+                        sign_in(os.environ["FIREBASE_API_KEY"], os.environ["IMPORTER_EMAIL"], os.environ["IMPORTER_PASSWORD"]))
+        if handle_refresh_request(db0):
+            return
         mode = "close" if now.hour in (0, 1) else "hourly" if 9 <= now.hour <= 20 else "final" if now.hour in (21, 22) else None
     if not mode:
         print("nothing to do at %s Cairo" % now.strftime("%H:%M"))
@@ -224,6 +312,7 @@ def main():
 
     token = sign_in(os.environ["FIREBASE_API_KEY"], os.environ["IMPORTER_EMAIL"], os.environ["IMPORTER_PASSWORD"])
     db = Firestore(os.environ["FIREBASE_PROJECT"], token)
+
 
     # anything older than yesterday is closed (also checked at 9 AM in case midnight was missed)
     if mode in ("close", "open", "hourly"):
@@ -243,8 +332,8 @@ def main():
         return
     done_key = {"refresh": "refreshedAt", "final": "finalAt"}.get(mode)
     if done_key and live and live.get(done_key) and not os.environ.get("MODE"):
-        # final: once a day; refresh: once an hour (GitHub may start two runs in one hour)
-        same = live[done_key][:13] == now.isoformat()[:13] if mode == "refresh" else True
+        # once an hour (GitHub may start two runs in one hour); "final" runs at 9 PM and again at 10 PM
+        same = live[done_key][:13] == now.isoformat()[:13]
         if same:
             print("%s for %s already done at %s - skipping" % (mode, date, live[done_key]))
             return

@@ -4,9 +4,11 @@ name: Nightly schedule import
 # with the sheet; 9 PM is the last read (final schedule); just after midnight old days close.
 # Cron is in UTC: Cairo is UTC+3 in summer time and UTC+2 in winter, so the hourly range covers
 # both, and the script checks the Cairo hour and does each step only once.
+# Every 10 minutes it also looks for a refresh the admin asked for on the site (exits in seconds if none).
 on:
   schedule:
-    - cron: "5 6-19 * * *"
+    - cron: "5 6-20 * * *"
+    - cron: "*/10 * * * *"
     - cron: "35 18,19 * * *"
     - cron: "5 21,22 * * *"
   workflow_dispatch:
@@ -24,6 +26,10 @@ on:
 permissions:
   contents: read
   actions: write
+
+concurrency:            # never two imports at the same time
+  group: import
+  cancel-in-progress: false
 
 jobs:
   import:
