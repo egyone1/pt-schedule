@@ -140,11 +140,13 @@ def merge_final(live, parsed):
             old = by_ns.get((d["name"], d.get("section"))) or by_name.get(d["name"])
         if old:
             marks = {_who(x): x.get("status", 0) for x in old.get("sessions", [])}
-            manual = {_who(x): x["units"] for x in old.get("sessions", []) if x.get("unitsManual")}
+            manual = {_who(x): x for x in old.get("sessions", []) if x.get("unitsManual")}
             for x in d["sessions"]:
                 x["status"] = marks.get(_who(x), 0)
                 if _who(x) in manual:                    # x1 / x2 set by hand on the site stays
-                    x["units"], x["unitsManual"], x["reviewed"] = manual[_who(x)], True, True
+                    m = manual[_who(x)]
+                    x.update(units=m["units"], unitsManual=True, reviewed=True,
+                             **{k: m[k] for k in ("unitsBy", "unitsAt") if k in m})
             same = sorted(map(_sig, old.get("sessions", []))) == sorted(map(_sig, d["sessions"]))
             if same:
                 for k in ("submitted", "submittedAt"):
@@ -246,7 +248,8 @@ def resync_day(db, wb, date):
                 if not x.get("status") and ox.get("status"):
                     x["status"] = ox["status"]
                 if ox.get("unitsManual") and not x.get("unitsManual"):
-                    x["units"], x["unitsManual"], x["reviewed"] = ox["units"], True, True
+                    x.update(units=ox["units"], unitsManual=True, reviewed=True,
+                             **{k: ox[k] for k in ("unitsBy", "unitsAt") if k in ox})
         if o.get("submitted") and not d.get("submitted") and \
                 [x["start"] for x in o["sessions"]] == [x["start"] for x in d["sessions"]]:
             d["submitted"], d["submittedAt"] = True, o.get("submittedAt")

@@ -1,5 +1,5 @@
 // Data layer: Firebase (live) or localStorage (demo, when config.js has no apiKey).
-import { firebaseConfig } from "./config.js?v=32";
+import { firebaseConfig } from "./config.js?v=33";
 
 // Treatment codes the secretaries write in a booking ("mt+es+us", "mt*2", "hot mgt") -> one name each.
 // Keep in step with importer/codes.py (same list, same rules).
@@ -23,7 +23,8 @@ export function treatmentsOf(details) {
   return out;
 }
 const addTreat = (into, sessions) => {
-  for (const s of sessions) for (const [t, n] of Object.entries(treatmentsOf(s.details))) into[t] = (into[t] || 0) + n;
+  // the importer saves what it understood on each session (typos, other spellings); older sessions: read here
+  for (const s of sessions) for (const [t, n] of Object.entries(s.treat || treatmentsOf(s.details))) into[t] = (into[t] || 0) + n;
   return into;
 };
 

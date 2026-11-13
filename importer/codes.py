@@ -32,6 +32,57 @@ _TWICE = re.compile(r"[*x×]\s*2|2\s*[*x×]|^\s*2\s*[a-z]|[a-z]\s*2\s*$")
 _WHOLE_X2 = re.compile(r"^\s*([*x×]\s*2|2\s*[*x×])\s*$")
 _STRIP_X = lambda t: re.sub(r"[*x×]?\s*\d+|\d+\s*[*x×]", "", t).strip(" *\"'\t")
 
+# other ways the secretaries write the same treatment (seen in the sheet, Nov 2026)
+ALIASES = {
+    "hotpack": "Hot pack / Magnet", "hot pak": "Hot pack / Magnet", "hotmag": "Hot pack / Magnet",
+    "hot mag": "Hot pack / Magnet", "hmgt": "Hot pack / Magnet", "h mgt": "Hot pack / Magnet",
+    "hot magnet": "Hot pack / Magnet", "magnet": "Hot pack / Magnet",
+    "shock wave": "Shockwave", "shockeave": "Shockwave", "shokwave": "Shockwave",
+    "air walk": "Air walker", "airwalk": "Air walker", "air walker": "Air walker",
+    "isis": "ISIS", "vib": "Vibration", "vibration": "Vibration",
+    "gate": "Gait", "spech": "Speech", "copm": "Compression", "balanc": "Balance", "balane": "Balance",
+    "blance": "Balance", "exercise": "EX", "exercises": "EX", "parallel bar": "PB", "wall bar": "WB", "wallbar": "WB",
+}
+_KNOWN = {**TREATMENTS, **ALIASES}
+
+
+def _dist(a, b):
+    """Levenshtein distance (small words only)."""
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def split_glued(word):
+    """Two treatments written without a space ("laserbibatron") -> [names]; [] if it doesn't split cleanly."""
+    if len(word) < 6 or not word.isalpha():
+        return []
+    for i in range(2, len(word) - 1):
+        a, b = word[:i], word[i:]
+        if a in _KNOWN and b in _KNOWN and len(a) >= 2 and len(b) >= 2:
+            return [_KNOWN[a], _KNOWN[b]]
+    return []
+
+
+def lookup(key):
+    """Treatment name for a written code: exact, a known other spelling, or a small typo
+    (1 letter off for words of 4+ letters, 2 for 7+; short codes like es / ex / us must be exact)."""
+    key = re.sub(r"\s+", " ", key or "").strip()
+    if key in _KNOWN:
+        return _KNOWN[key]
+    if len(key) < 4 or not re.fullmatch(r"[a-z ]+", key):
+        return None
+    limit = 2 if len(key) >= 7 else 1
+    best = sorted((_dist(key, k), k) for k in _KNOWN if len(k) >= 4 and abs(len(k) - len(key)) <= limit)
+    if best and best[0][0] <= limit and (len(best) == 1 or best[1][0] > best[0][0]
+                                          or _KNOWN[best[1][1]] == _KNOWN[best[0][1]]):
+        return _KNOWN[best[0][1]]
+    return None
+
 
 def _scan(details):
     """-> ([(treatment name, times)], whole_x2). Codes may be joined by + or only by spaces ("mt us x2");
@@ -42,8 +93,8 @@ def _scan(details):
             whole = True
             continue
         key = _STRIP_X(part)
-        if key in TREATMENTS:
-            codes.append((TREATMENTS[key], 2 if _TWICE.search(part) else 1))
+        if lookup(key):
+            codes.append((lookup(key), 2 if _TWICE.search(part) else 1))
             continue
         toks, i = part.split(), 0                       # "mt us x2", "mt*2 us *2"
         while i < len(toks):
@@ -52,12 +103,15 @@ def _scan(details):
                 i += 1
                 continue
             two = " ".join(toks[i:i + 2])
-            if i + 1 < len(toks) and _STRIP_X(two) in TREATMENTS:     # "hot mgt", "scanner laser"
-                codes.append((TREATMENTS[_STRIP_X(two)], 2 if _TWICE.search(two) else 1))
+            if i + 1 < len(toks) and _STRIP_X(two) in _KNOWN:          # "hot mgt", "scanner laser", "shock wave"
+                codes.append((_KNOWN[_STRIP_X(two)], 2 if _TWICE.search(two) else 1))
                 i += 2
                 continue
-            if _STRIP_X(toks[i]) in TREATMENTS:
-                codes.append((TREATMENTS[_STRIP_X(toks[i])], 2 if _TWICE.search(toks[i]) else 1))
+            name = lookup(_STRIP_X(toks[i]))
+            if name:
+                codes.append((name, 2 if _TWICE.search(toks[i]) else 1))
+            else:                                                   # "laserbibatron" -> laser + bibatron
+                codes.extend((n, 1) for n in split_glued(_STRIP_X(toks[i])))
             i += 1
     return codes, whole
 
@@ -65,6 +119,26 @@ def _scan(details):
 def parse_codes(details):
     """-> [(treatment name, times)] for the known codes in the cell."""
     return _scan(details)[0]
+
+
+# notes that are not treatments (new patient, re-evaluation, icu, vip...) - never reported as "not understood"
+NOT_TREATMENT = {"n", "new", "neww", "ree", "re", "reev", "vip", "top", "icu", "in", "inpatient", "inpateint", "out",
+                 "outpatient", "assessment", "assisment", "assesment", "session", "sessions", "x", "pt", "ped", "r", "l",
+                 "rt", "lt", "only", "dr", "d", "cash", "package", "pkg", "free", "follow", "up", "eval", "evaluation",
+                 "first", "trial", "home", "visit", "online", "ot", "aq", "test"}
+_KNOWN_WORDS = {w for k in _KNOWN for w in k.split()}
+
+
+def unknown_words(details):
+    """Latin words in the cell that were not understood as a treatment (for the admin to check)."""
+    out = []
+    for w in re.findall(r"[a-z]+", str(details or "").lower()):
+        w2 = re.sub(r"x$", "", w) if len(w) > 2 else w          # "mtx" from "mtx2"
+        if w in _KNOWN_WORDS or w2 in _KNOWN_WORDS or w in NOT_TREATMENT or lookup(w) or lookup(w2) or split_glued(w):
+            continue
+        if w not in out:
+            out.append(w)
+    return out
 
 
 def treatments_of(details):

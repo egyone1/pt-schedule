@@ -13,7 +13,7 @@ import datetime as dt
 import re
 import openpyxl
 
-from codes import sheet_mark, units_of
+from codes import sheet_mark, units_of, treatments_of, unknown_words
 
 SLOT_MIN = 15
 
@@ -216,6 +216,8 @@ def parse_day(path_or_wb, day):
                 "end": end_dt.strftime("%H:%M"),
                 "minutes": dur,
                 "units": units_of(details, dur),
+                "treat": treatments_of(details),            # read once here; the site counts from this
+                "unknown": unknown_words(details),          # words not understood -> admin's review list
                 "sheet": sheet_mark(ws.cell(r, c)),   # red = cancelled, yellow = inpatient
                 "status": 0,
             })

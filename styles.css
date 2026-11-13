@@ -362,3 +362,6 @@ table.rep tr.subrow td.nm { padding-inline-start: 34px; }
   border-radius: 12px; background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); font-size: 14px; }
 
 .refresh-st { font-size: 12.5px; color: var(--text-2); background: var(--surface); border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; }
+
+.sess .x2.one.ux { opacity: .75; font-size: 12px; }
+.sess .x2.one.ux:hover { opacity: 1; }

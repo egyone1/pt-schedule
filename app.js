@@ -1,5 +1,5 @@
-import { createStore } from "./store.js?v=32";
-import { ADMIN_EMAIL, VIEWERS } from "./config.js?v=32";
+import { createStore } from "./store.js?v=33";
+import { ADMIN_EMAIL, VIEWERS } from "./config.js?v=33";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -232,10 +232,11 @@ function sessHTML(doc, s, top, height, ctl = state.admin) {
   const style = top == null ? "" : `style="top:${top}px;height:${height}px"`;
   const locked = canEdit(doc) ? "" : " locked";
   const u = s.units || 1, review = needsReview(s);
-  // the count can be changed only on a "review" session (over 1h15, read as one) - it keeps the toggle after a change
-  const can = ctl && (review || s.reviewed) && (state.admin || canEdit(doc));
-  const label = u > 1 ? `×${u}` : review ? "مراجعة ×؟" : s.reviewed ? "×1 ✓" : "";
-  const tip = review ? "الجلسة أطول من ساعة وربع ومتحسبة جلسة واحدة — راجعها" : `الخانة دي بتتحسب ${u} ${u > 1 ? "جلسات" : "جلسة"}`;
+  // the doctor (own page, before Submit) or the admin can change the count - always through a confirmation
+  const can = ctl && (state.admin || canEdit(doc));
+  const label = (u > 1 ? `×${u}` : review ? "مراجعة ×؟" : can ? "＋" : "") + (s.unitsManual && (u > 1 || !can) ? " ✎" : "");
+  const tip = (review ? "الجلسة أطول من ساعة وربع ومتحسبة جلسة واحدة — راجعها" : `الخانة دي بتتحسب ${u} ${u > 1 ? "جلسات" : "جلسة"}`)
+    + (s.unitsManual ? ` · اتعدّلت يدوي${s.unitsBy ? " (" + (s.unitsBy === "admin" ? "الأدمن" : "الدكتور") + ")" : ""}` : "");
   const two = label ? `<span class="x2 ${review ? "rev" : ""} ${u === 1 && !review ? "one" : ""} ${can ? "ux" : ""}" ${can ? `role="button" data-ux-key="${esc(doc.key)}" data-ux-id="${esc(s.id)}"` : ""} title="${tip}${can ? " · دوس للتغيير" : ""}">${label}</span>` : "";
   return `<button class="sess s${s.status || 0}${locked}" data-key="${esc(doc.key)}" data-id="${esc(s.id)}" ${style}
     title="${esc(s.patient)} — ${esc(s.details)}">
@@ -472,13 +473,26 @@ async function cycle(key, id) {
   catch (e) { console.error(e); toast("محصلش حفظ — جرّب تاني"); }
 }
 
-// x1 -> x2 -> x3 -> x1 (set by hand: the hourly sheet reading keeps it)
+// changing the count takes two steps: tap the badge, then confirm in the dialog (no change by a stray tap)
 async function setUnits(key, id) {
   const day = state.day, doc = { key, ...day.doctors[key] };
   if (!state.admin && !canEdit(doc)) { toast("اتعمل Submit — الأدمن بس يقدر يعدّل"); return; }
   const cur = doc.sessions.find(s => s.id === id);
-  if (!cur || !(needsReview(cur) || cur.reviewed)) return;      // only "review" sessions can be changed
-  const sessions = doc.sessions.map(s => s.id === id ? { ...s, units: (s.units || 1) % 3 + 1, unitsManual: true, reviewed: true } : s);
+  if (!cur) return;
+  const u0 = cur.units || 1;
+  const d = await modal("تأكيد عدد الجلسات",
+    `<p><b>${esc(cur.patient)}</b> · ${fmtTime(toMin(cur.start))} – ${fmtTime(toMin(cur.end))} (${cur.minutes} دقيقة)<br>
+       <span style="direction:ltr;display:inline-block;color:var(--text-2)">${esc(cur.details || "—")}</span></p>
+     <p style="font-size:13px;color:var(--text-2)">غيّر العدد بس لو الحالة فعلاً بتتحسب أكتر من جلسة (مثلاً MT×2، أو الجلسة كلها اتعملت مرتين).
+       التعديل بيتسجّل وبيبان للأدمن.</p>
+     <div style="display:flex;gap:8px;margin-top:8px">${[1, 2, 3].map(n => `<label style="flex:1;border:1px solid var(--line-strong);border-radius:10px;padding:8px;text-align:center;cursor:pointer">
+       <input type="radio" name="uu" value="${n}" ${n === u0 ? "checked" : ""} style="width:auto"> ${n === 1 ? "جلسة واحدة" : n === 2 ? "جلستين" : "3 جلسات"}</label>`).join("")}</div>`,
+    { ok: "أكّد" });
+  if (!d) return;
+  const n = +(d.querySelector('input[name="uu"]:checked')?.value || u0);
+  if (n === u0) return;
+  const sessions = doc.sessions.map(s => s.id === id ? { ...s, units: n, unitsManual: true, reviewed: true,
+    unitsBy: state.admin ? "admin" : "doctor", unitsAt: new Date().toISOString() } : s);
   day.doctors[key].sessions = sessions;
   renderToday();
   try { await state.store.setSessions(day.date, key, sessions, day.status === "closed" || !!day.finalAt); }
@@ -526,6 +540,7 @@ function adminDayBar() {
     <button class="ghost" id="deptsBtn">🎨 الأقسام</button>
     <button class="ghost" id="srcBtn">🔗 لينك الشيت</button>
     <button class="ghost" id="showAllBtn" title="لما يتقفل: كل دكتور يختار اسمه ويشوف جدوله بس">${state.settings.showAll !== false ? "👁 الجدول كله باين للكل" : "🙈 كل دكتور بيشوف جدوله بس"}</button>
+    ${state.day ? `<button class="ghost" id="reviewBtn" title="خانات الكلام فيها مش مفهوم، جلسات طويلة، وتعديلات يدوية">📝 للمراجعة (${reviewItems().length})</button>` : ""}
     <button class="ghost" id="refreshBtn" title="يقرا الشيت تاني لليوم اللي تختاره (خلال 5–10 دقايق)">🔄 حدّث من الشيت</button>
     <button class="ghost" id="acctBtn">👥 حسابات الأقسام</button>
     ${refreshStatus()}
@@ -555,6 +570,7 @@ function bindAdminBar() {
   $("#noticesBtn")?.addEventListener("click", manageNotices);
   $("#acctBtn")?.addEventListener("click", manageAccounts);
   $("#refreshBtn")?.addEventListener("click", askRefresh);
+  $("#reviewBtn")?.addEventListener("click", showReview);
   if (!state.unsubRefresh) {
     state.unsubRefresh = true;                // set before subscribing: the first answer can come right away
     state.unsubRefresh = state.store.onRefresh(r => {
@@ -565,6 +581,30 @@ function bindAdminBar() {
       setTimeout(() => { if (state.view === "today" && state.admin) renderToday(); }, 0);   // not inside this render
     });
   }
+}
+
+/* ---------------- what needs a look today (admin) ---------------- */
+function reviewItems() {
+  const out = [];
+  for (const d of doctorsOf(state.day || { doctors: {} })) for (const s of d.sessions) {
+    const why = [];
+    if ((s.unknown || []).length) why.push(`كلام مش مفهوم: ${s.unknown.join(", ")}`);
+    if (needsReview(s)) why.push(`${s.minutes} دقيقة ومتحسبة جلسة واحدة`);
+    if (s.unitsManual) why.push(`اتعدّلت يدوي لـ ×${s.units || 1}${s.unitsBy === "doctor" ? " (الدكتور)" : s.unitsBy === "admin" ? " (الأدمن)" : ""}`);
+    if (why.length) out.push({ d, s, why });
+  }
+  return out;
+}
+async function showReview() {
+  const items = reviewItems();
+  const rows = items.map(({ d, s, why }) => `<div style="border-bottom:1px solid var(--line);padding:6px 0;font-size:13px">
+      <b>${esc(d.name)}</b> · ${fmtTime(toMin(s.start))} · ${esc(s.patient)} · ×${s.units || 1}<br>
+      <span style="direction:ltr;display:inline-block;color:var(--text-2)">${esc(s.details || "—")}</span><br>
+      <span style="color:var(--warn)">${why.map(esc).join(" · ")}</span></div>`).join("");
+  await modal(`📝 للمراجعة — ${arDate(state.day.date)}`,
+    items.length ? `<div style="max-height:60vh;overflow:auto">${rows}</div>
+      <p style="font-size:12px;color:var(--text-3);margin-top:8px">لتغيير عدد جلسات أي حالة: دوس على العلامة اللي عليها في الجدول وأكّد.</p>`
+      : "<p>مفيش حاجة محتاجة مراجعة في اليوم ده ✓</p>", { ok: "تمام", cancel: "قفل" });
 }
 
 /* ---------------- refresh from the sheet on demand (admin) ---------------- */
