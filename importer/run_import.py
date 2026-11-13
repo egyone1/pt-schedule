@@ -341,9 +341,12 @@ def main():
             print("%s for %s already done at %s - skipping" % (mode, date, live[done_key]))
             return
 
+    src = _safe(lambda: db.get("private/source")) or {}
+    if mode == "open" and not os.environ.get("MODE") and src.get("noTab") == date and src.get("noTabAt")             and (now - dt.datetime.fromisoformat(src["noTabAt"])).total_seconds() < 20 * 60:
+        print("no tab for %s 20 minutes ago - trying again later" % date)    # the timer runs every 5 minutes
+        return
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "book.xlsx")
-        src = _safe(lambda: db.get("private/source")) or {}
         url = src.get("shareUrl") or os.environ.get("SHARE_URL")
         try:
             download_workbook(url, path)
@@ -353,6 +356,7 @@ def main():
         _safe(lambda: db.update("private/source", {"lastOkAt": dt.datetime.now(CAIRO).isoformat(), "lastError": ""}))
         parsed = parse_day(path, day)
     if not parsed or not parsed["doctors"]:
+        _safe(lambda: db.update("private/source", {"noTab": date, "noTabAt": dt.datetime.now(CAIRO).isoformat()}))
         print("no tab for %s in the workbook - nothing imported" % day)
         return
     remember_subs(db, parsed["doctors"])
